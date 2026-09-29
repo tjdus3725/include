@@ -253,14 +253,12 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
           <span className="ml-2 text-mist-500">· {state.participants.length}명 접속</span>
         </p>
       </div>
-      {canBroadcast && (
-        bc.isSharingHere
-          ? <button className="btn-danger !px-3" onClick={() => void bc.stop()}><Icon name="stop" size={14} /><span className="hidden sm:inline">방송 종료</span></button>
-          : <button className="btn-primary !px-3" onClick={() => void bc.start()} disabled={bc.share === 'starting' || state.broadcast.live || sharingElsewhere || state.status !== 'joined'}
-              title={sharingElsewhere ? '다른 채널에서 방송 중입니다' : state.broadcast.live ? '이미 방송 중입니다' : '화면 공유 방송 시작'}>
-              <Icon name="monitor" size={16} /><span className="hidden sm:inline">방송 시작</span>
-            </button>
-      )}
+      {bc.isSharingHere
+        ? <button className="btn-danger !px-3" onClick={() => void bc.stop()}><Icon name="stop" size={14} /><span className="hidden sm:inline">방송 종료</span></button>
+        : <button className="btn-primary !px-3" onClick={() => void bc.start()} disabled={bc.share === 'starting' || (canBroadcast && (state.broadcast.live || sharingElsewhere)) || state.status !== 'joined'}
+            title={sharingElsewhere ? '다른 채널에서 방송 중입니다' : state.broadcast.live ? '이미 방송 중입니다' : '화면 공유 방송 시작'}>
+            <Icon name="monitor" size={16} /><span className="hidden sm:inline">방송 시작</span>
+          </button>}
       <button className="btn-ghost !px-3" onClick={leave} aria-label="채널 나가기" title="채널 나가기"><Icon name="logout" size={16} /><span className="hidden xl:inline">나가기</span></button>
       {!isDesktop && <button className="btn-secondary !px-3" onClick={() => setInfoOpen(true)} aria-label="채널 정보와 참여자"><Icon name="users" size={16} /><span className="hidden sm:inline">참여자·관리</span></button>}
     </div>

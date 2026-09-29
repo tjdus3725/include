@@ -164,6 +164,11 @@ console.log(`\nInChat e2e  (HTTP ${HTTP}${HTTPS_LAN ? `, HTTPS ${HTTPS_LAN}` : '
 // =====================================================================
 console.log('[1] 입장·채팅');
 let A, B, C;
+const NO_PERM = '방송 권한이 존재하지 않습니다. 관리자에게 문의해 주세요';
+async function expectNoPerm(page, why) {
+  await page.getByRole('button', { name: '방송 시작', exact: true }).click();
+  await page.getByText(NO_PERM).first().waitFor({ timeout: 3000 }).catch(() => { throw new Error(why + ': 권한 없음 안내가 뜨지 않음'); });
+}
 await test('기본 방이 없음: 새 서버에는 방이 하나도 없다', async () => {
   assert(emptyCheck === 0, `새 서버에 방이 ${emptyCheck}개 있음 (기본 방이 생성되면 안 됨)`);
   return '방 0개 (기본 방 자동 생성 없음)';
@@ -595,7 +600,7 @@ await test('채널 관리자의 방송 요청: 서버 관리자에게만 전달�
   await sleep(300);
   assert(O.notes.some((n) => n.kind === 'broadcaster_granted'), '개설자에게 승인 알림이 없음');
   assert(!(await emit(A.sock, 'request:list', {})).requests.some((r) => r.userId === O.user.id), '승인 후에도 요청이 남음');
-  assert(!(await emit(O.sock, 'broadcaster:list', { channelId: cid })).broadcasters.some((b) => b.userId === O.user.id), '개설자에게 방송 권한 역할 행이 만들어짐');
+  assert((await emit(O.sock, 'broadcaster:list', { channelId: cid })).broadcasters.some((b) => b.userId === O.user.id), '서버 관리자가 승인한 개설자가 보유자 목록에 없음');
   // 다시 요청 → 거절
   assert((await emit(O.sock, 'broadcast:request', { channelId: cid })).ok, '재요청 실패');
   const again = (await emit(A.sock, 'request:list', {})).requests.find((r) => r.userId === O.user.id);
@@ -631,6 +636,14 @@ await test('서버 관리자: 새 채널 개설 알림, 채널 관리자에게 �
   assert((await emit(A.sock, 'broadcaster:grant', { channelId: created.id, userId: O.user.id })).ok, '서버 관리자의 개설자 직접 부여 실패');
   await sleep(300);
   assert(O.notes.some((n) => n.kind === 'broadcaster_granted'), '개설자에게 부여 알림이 없음');
+  const listed = await emit(A.sock, 'broadcaster:list', { channelId: created.id });
+  assert(listed.broadcasters?.some((b) => b.userId === O.user.id), '서버 관리자가 부여한 개설자가 방송 권한 보유자 목록에 없음');
+  const ov = await emit(A.sock, 'broadcaster:overview', {});
+  assert((ov.broadcasters ?? []).some((b) => b.userId === O.user.id && b.channelId === created.id), '방송 권한 관리 탭(overview)에 개설자가 없음');
+  assert((await emit(O.sock, 'broadcast:start', { channelId: created.id, hasAudio: false })).ok, '부여받은 개설자가 방송을 시작하지 못함');
+  const noPerm = await emit(U.sock, 'broadcast:start', { channelId: created.id, hasAudio: false });
+  assert(noPerm.error?.message === '방송 권한이 존재하지 않습니다. 관리자에게 문의해 주세요', `권한 없음 문구가 다름: ${noPerm.error?.message}`);
+  await emit(O.sock, 'broadcast:stop', { channelId: created.id });
   assert((await emit(U.sock, 'broadcaster:grant', { channelId: created.id, userId: O.user.id })).error?.code === 'FORBIDDEN', '일반 사용자가 개설자에게 부여');
   assert((await emit(O.sock, 'broadcaster:grant', { channelId: created.id, userId: A.user.id })).error?.code === 'INVALID_TARGET', '개설자가 서버 관리자에게 부여');
   for (const x of [A, A2, O, U]) x.sock.close();
@@ -703,7 +716,7 @@ await test('UI 관리 기능: 공지 고정·메시지 삭제·강퇴·재입장
   const V = await newUser('문제유저', { channel: 'all' });
   await V.page.getByRole('button', { name: /관리 UI 채널/ }).click(); await confirmEntry(V.page);
   await ready(V.page);
-  assert((await V.page.getByRole('button', { name: '방송 시작', exact: true }).count()) === 0, '일반 사용자에게 방송 시작 버튼이 보임');
+  await expectNoPerm(V.page, '일반 사용자');
   assert((await V.page.getByRole('button', { name: '공지 등록' }).count()) === 0, '일반 사용자에게 공지 등록 UI 가 보임');
   await O.page.getByLabel('공지 내용').fill('📌 오늘 발표는 7시입니다');
   await O.page.getByRole('button', { name: '공지 등록' }).click();
@@ -732,7 +745,7 @@ await test('UI 관리 기능: 공지 고정·메시지 삭제·강퇴·재입장
 
 await test('서버 관리자 인증: 입장한 뒤 인증해도 즉시 관리·방송 권한 반영', async () => {
   const U = await newUser('인증후보', { channel: 'demo' });
-  assert((await U.page.getByRole('button', { name: '방송 시작', exact: true }).count()) === 0, '인증 전에 방송 버튼이 보임');
+  await expectNoPerm(U.page, '인증 전');
   await U.page.getByRole('button', { name: '내 프로필' }).click();
   await U.page.getByRole('menuitem', { name: /서버 관리자 인증/ }).click();
   await U.page.fill('input[type=password]', ADMIN_CODE);
@@ -820,7 +833,7 @@ await test('로비 → 입장 방식(익명) 선택 → 익명 별칭만 노출 
   await A.page.screenshot({ path: path.join(out, 'desktop-bell.png') });
   // 서버가 권한을 보장하는지: 요청만으로는 방송 불가, 승인 후에만 가능
   const cookieB = (await B.ctx.cookies()).find((c) => c.name === 'inchat_sid');
-  assert((await B.page.getByRole('button', { name: '방송 시작', exact: true }).count()) === 0, '요청만으로 방송 버튼이 열림');
+  await expectNoPerm(B.page, '요청만으로');
   await A.page.reload();
   await A.page.getByRole('button', { name: /알림 1건/ }).waitFor({ timeout: 6000 }); // 나중에 접속해도 남아 있음
   await A.page.getByRole('button', { name: /알림 1건/ }).click();
@@ -998,7 +1011,7 @@ await test('방송 권한 부여·회수 (⋮ 메뉴): 부여 → 방송 가능 
   const T = await newUser('권한대상', { channel: 'all' });
   await T.page.getByRole('button', { name: /권한 채널/ }).click(); await confirmEntry(T.page);
   await ready(T.page);
-  assert((await T.page.getByRole('button', { name: '방송 시작', exact: true }).count()) === 0, '권한 없는 사용자에게 방송 버튼이 보임');
+  await expectNoPerm(T.page, '권한 없는 사용자');
   // 금지 아이콘 대신 ⋮ 메뉴, 메뉴 항목 확인
   await O.page.getByRole('button', { name: '권한대상 관리 메뉴' }).first().click();
   const items = await O.page.getByRole('menuitem').allInnerTexts();
@@ -1017,7 +1030,8 @@ await test('방송 권한 부여·회수 (⋮ 메뉴): 부여 → 방송 가능 
   await O.page.getByRole('menuitem', { name: /방송 권한 회수/ }).click();
   await T.page.getByText('방송 권한이 회수되어 방송이 종료되었습니다.').first().waitFor({ timeout: 8000 });
   await O.page.locator('video').waitFor({ state: 'detached', timeout: 8000 });
-  await T.page.getByRole('button', { name: '방송 시작', exact: true }).waitFor({ state: 'detached', timeout: 6000 });
+  await T.page.getByRole('button', { name: '방송 시작', exact: true }).click();
+  await T.page.getByText('방송 권한이 존재하지 않습니다. 관리자에게 문의해 주세요').first().waitFor({ timeout: 6000 });
   await T.page.screenshot({ path: path.join(out, 'desktop-revoked.png') });
   return '부여 → 방송 시작·시청 → 회수 시 방송 종료 및 방송 버튼 제거';
 });

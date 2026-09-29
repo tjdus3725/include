@@ -82,27 +82,22 @@ export function ChannelPanel(p: Props) {
     <div className="min-h-0 flex-1 overflow-y-auto bg-ink-800 lg:border-l lg:border-ink-600" aria-label="채널 정보">
       <div className={section}>
         <h3 className={h}><Icon name="radio" size={14} /> 방송</h3>
-        {p.canBroadcast ? (
-          <>
-            {p.isSharing ? (
-              <button className="btn-danger w-full" onClick={p.onStop}><Icon name="stop" size={14} /> 방송 종료</button>
-            ) : (
-              <button className="btn-primary w-full" onClick={p.onStart} disabled={p.starting || live || p.sharingElsewhere}>
-                <Icon name="monitor" size={16} /> {p.starting ? '화면 선택 중…' : live ? '이미 방송 중입니다' : p.sharingElsewhere ? '다른 채널에서 방송 중입니다' : '화면 공유 방송 시작'}
-              </button>
-            )}
-            {p.shareBlocked === 'insecure' && (
-              <p className="mt-2 rounded-lg bg-amber-400/10 p-2.5 text-xs leading-relaxed text-amber-400" role="note">
-                지금 주소는 보안 연결이 아니어서 브라우저가 화면 공유를 막습니다. 서버 컴퓨터에서는 <b>localhost</b> 로, 다른 기기에서는 <b>HTTPS</b> 주소로 접속해 주세요.
-                {httpsUrl ? <> HTTPS 주소: <a className="underline" href={httpsUrl}>{httpsUrl}</a></> : ' (서버에서 npm run cert 후 HTTPS=true 설정 필요)'}
-              </p>
-            )}
-            {p.shareBlocked === 'unsupported' && (
-              <p className="mt-2 rounded-lg bg-amber-400/10 p-2.5 text-xs leading-relaxed text-amber-400" role="note">이 브라우저/기기는 화면 공유를 지원하지 않습니다. 데스크톱 Chrome·Edge·Firefox 에서 방송할 수 있어요.</p>
-            )}
-          </>
+        {p.isSharing ? (
+          <button className="btn-danger w-full" onClick={p.onStop}><Icon name="stop" size={14} /> 방송 종료</button>
         ) : (
-          <p className="text-sm text-mist-400">{live ? `${state.broadcast.broadcaster}님이 방송 중입니다.` : '방송은 채널 관리자만 시작할 수 있습니다.'}</p>
+          <button className="btn-primary w-full" onClick={p.onStart} disabled={p.starting || (p.canBroadcast && (live || p.sharingElsewhere))}>
+            <Icon name="monitor" size={16} /> {p.starting ? '화면 선택 중…' : p.canBroadcast && live ? '이미 방송 중입니다' : p.canBroadcast && p.sharingElsewhere ? '다른 채널에서 방송 중입니다' : '화면 공유 방송 시작'}
+          </button>
+        )}
+        {!p.canBroadcast && live && <p className="mt-2 text-sm text-mist-400">{state.broadcast.broadcaster}님이 방송 중입니다.</p>}
+        {p.canBroadcast && p.shareBlocked === 'insecure' && (
+          <p className="mt-2 rounded-lg bg-amber-400/10 p-2.5 text-xs leading-relaxed text-amber-400" role="note">
+            (권한과 별개로) 지금 주소는 보안 연결이 아니어서 브라우저가 화면 공유를 막습니다. 서버 컴퓨터에서는 <b>localhost</b> 로, 다른 기기에서는 <b>HTTPS</b> 주소로 접속해 주세요.
+            {httpsUrl ? <> HTTPS 주소: <a className="underline" href={httpsUrl}>{httpsUrl}</a></> : ' (서버에서 npm run cert 후 HTTPS=true 설정 필요)'}
+          </p>
+        )}
+        {p.canBroadcast && p.shareBlocked === 'unsupported' && (
+          <p className="mt-2 rounded-lg bg-amber-400/10 p-2.5 text-xs leading-relaxed text-amber-400" role="note">이 브라우저/기기는 화면 공유를 지원하지 않습니다. 데스크톱 Chrome·Edge·Firefox 에서 방송할 수 있어요.</p>
         )}
       </div>
 

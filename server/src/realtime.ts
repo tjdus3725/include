@@ -451,7 +451,7 @@ export function initRealtime(server: Server) {
         s.emit('channel:kicked', { channelId: d.channelId, reason, expiresAt });
         leaveChannel(s, true);
       }
-      if (broadcasts.get(d.channelId)?.userId === target.id) endBroadcast(d.channelId, 'kicked');
+      if (broadcasts.get(d.channelId)?.userId === target.id && !repo.canModerate(target, d.channelId)) endBroadcast(d.channelId, 'kicked');
       repo.revokeBroadcaster(d.channelId, target.id);
       repo.revokeManager(d.channelId, target.id);
       const span = d.minutes ? `${fmtDuration(d.minutes)} 동안 ` : '';
@@ -472,10 +472,13 @@ export function initRealtime(server: Server) {
       const target = repo.getUser(d.userId);
       if (!target) throw new AppError('USER_NOT_FOUND', '대상 사용자를 찾을 수 없습니다.', 404);
       if (repo.canModerate(target, d.channelId)) {
-        // 채널 개설자는 이미 방송할 수 있다. 서버 관리자가 부여하면(요청에 대한 승인이든 직접 부여든) 알림과 요청 정리만 하고 역할 행은 추가하지 않는다
+        // 채널 개설자는 항상 방송할 수 있다. 서버 관리자가 명시적으로 부여하면(요청 승인이든 직접 부여든) 보유자 목록에 기록하고 알림을 보낸다
         if (user.is_admin !== 1 || !repo.isOwner(d.channelId, target.id)) throw new AppError('INVALID_TARGET', '채널 관리자는 이미 방송할 수 있습니다.', 400);
+        if (repo.isBroadcaster(d.channelId, target.id)) throw new AppError('ALREADY_GRANTED', '이미 방송 권한이 있습니다.', 409);
+        repo.grantBroadcaster(d.channelId, target.id);
         for (const id of repo.resolvePendingFor(d.channelId, target.id, 'granted', user.id)) emitToReviewers(d.channelId, 'request:resolved', { id }, true);
         pushNotification(target.id, 'broadcaster_granted', d.channelId, { channelName: channelNameOf(d.channelId) });
+        notifyRole(d.channelId, target.id);
         return { broadcasters: withNames(d.channelId, repo.listBroadcasters(d.channelId)) };
       }
       if (repo.isBroadcaster(d.channelId, target.id)) throw new AppError('ALREADY_GRANTED', '이미 방송 권한이 있습니다.', 409);
@@ -491,7 +494,7 @@ export function initRealtime(server: Server) {
       if (!target) throw new AppError('USER_NOT_FOUND', '대상 사용자를 찾을 수 없습니다.', 404);
       if (!repo.revokeBroadcaster(d.channelId, target.id)) throw new AppError('NOT_GRANTED', '방송 권한이 없는 사용자입니다.', 400);
       // 방송 중이면 권한 회수와 함께 방송을 종료한다 (관리자의 명시적 조치)
-      if (broadcasts.get(d.channelId)?.userId === target.id) endBroadcast(d.channelId, 'revoked');
+      if (broadcasts.get(d.channelId)?.userId === target.id && !repo.canModerate(target, d.channelId)) endBroadcast(d.channelId, 'revoked');
       pushNotification(target.id, 'broadcaster_revoked', d.channelId, { channelName: channelNameOf(d.channelId) });
       notifyRole(d.channelId, target.id);
       return { broadcasters: withNames(d.channelId, repo.listBroadcasters(d.channelId)) };
@@ -567,7 +570,7 @@ export function initRealtime(server: Server) {
     handle(socket, 'broadcast:start', schemas.start, (d, user) => {
       requireJoined(socket, d.channelId);
       if (!repo.canBroadcast(user, d.channelId)) {
-        throw new AppError('FORBIDDEN', '이 채널에서 방송할 권한이 없습니다. 채널 관리자에게 방송 권한을 요청하세요.', 403);
+        throw new AppError('FORBIDDEN', '방송 권한이 존재하지 않습니다. 관리자에게 문의해 주세요', 403);
       }
       if (broadcasts.has(d.channelId)) throw new AppError('ALREADY_LIVE', '이미 이 채널에서 방송이 진행 중입니다.', 409);
       if ([...broadcasts.values()].some((x) => x.socketId === socket.id)) {

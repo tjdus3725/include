@@ -153,6 +153,10 @@ export function useBroadcast({ channelId, joined, epoch, live, canBroadcast, ice
     const ch = channelId;
     if (!ch || shareRef.current !== 'idle') return;
     setError(null);
+    if (!canBroadcast) {
+      setError('방송 권한이 존재하지 않습니다. 관리자에게 문의해 주세요');
+      return;
+    }
     if (!window.isSecureContext) {
       setError('이 주소(http://내부IP)에서는 브라우저가 화면 공유를 막습니다. HTTPS 주소 또는 서버 컴퓨터의 localhost 로 접속해 주세요.');
       return;
@@ -197,7 +201,7 @@ export function useBroadcast({ channelId, joined, epoch, live, canBroadcast, ice
     setLocalHasAudio(hasAudio);
     setLocalStream(media);
     setShare('live');
-  }, [channelId, cleanupLocal]);
+  }, [channelId, canBroadcast, cleanupLocal]);
 
   /** 방송 종료 버튼: 보고 있는 채널과 관계없이 방송 중인 채널의 방송을 종료 */
   const stop = useCallback(async () => {
