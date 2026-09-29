@@ -13,6 +13,7 @@ import { useNotifications } from '../hooks/useNotifications';
 import { useRequests } from '../hooks/useRequests';
 import { ChannelList } from './ChannelList';
 import { ChannelPanel } from './ChannelPanel';
+import { SplitColumn } from './SplitColumn';
 import { Chat } from './Chat';
 import { ChatOverlay } from './ChatOverlay';
 import { CreateChannelDialog } from './CreateChannelDialog';
@@ -196,8 +197,9 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   const onCreated = (c: Channel) => { setCreateOpen(false); void refresh(); enter(c.id, 'nick'); toast(`"${c.name}" 채널을 만들었습니다.`, 'success'); };
 
   // ---- 조각 ----
-  const panel = (
+  const panelEl = (mode: 'full' | 'noParticipants' | 'participantsOnly') => (
     <ChannelPanel
+      hideParticipants={mode === 'noParticipants'} participantsOnly={mode === 'participantsOnly'}
       state={state} user={user} config={config} canModerate={canModerate} canBan={canBan} canBroadcast={canBroadcast}
       isSharing={bc.isSharingHere} starting={bc.startingHere} sharingElsewhere={sharingElsewhere} shareBlocked={bc.shareBlocked}
       onStart={() => void bc.start()} onStop={() => void bc.stop()}
@@ -213,6 +215,17 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
       onDeleteChannel={() => void onDeleteChannel()} bansVersion={bansVersion}
       onRequestBroadcast={(name) => setRequestAdmin(name)}
     />
+  );
+  // 방송 중 우측 상단 창: 접속 인원수 + 참여자 목록
+  const participantsEl = (
+    <div className="flex h-full min-h-0 flex-col bg-ink-800">
+      <h3 className="flex shrink-0 items-center gap-1.5 border-b border-ink-600 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-mist-500">
+        <Icon name="users" size={14} /> 참여자 · 현재 {state.participants.length}명 접속 중
+      </h3>
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {panelEl('participantsOnly')}
+      </div>
+    </div>
   );
   const chatEl = (
     <Chat
@@ -289,9 +302,11 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
         <div className="flex min-w-0 flex-1 flex-col">
           {channelHeader}
           {shareAlert}
-          {live ? (<><div className="p-4 pb-3">{stage}</div><div className="flex min-h-0 flex-1 flex-col border-t border-ink-600">{panel}</div></>) : chatEl}
+          {live ? (<><div className="p-4 pb-3">{stage}</div><div className="flex min-h-0 flex-1 flex-col border-t border-ink-600">{panelEl('noParticipants')}</div></>) : chatEl}
         </div>
-        <div className="flex w-[380px] shrink-0 flex-col xl:w-[420px]">{live ? chatEl : panel}</div>
+        <div className="flex w-[380px] shrink-0 flex-col xl:w-[420px]">
+          {live ? <SplitColumn top={participantsEl} bottom={chatEl} /> : panelEl('full')}
+        </div>
       </>
     );
   } else {
@@ -364,7 +379,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
         </div>,
         pipWin.document.body,
       )}
-      {infoOpen && !isDesktop && <Modal title={channel?.name ?? '채널 정보'} onClose={() => setInfoOpen(false)}><div className="-m-5 flex max-h-[70dvh] flex-col">{panel}</div></Modal>}
+      {infoOpen && !isDesktop && <Modal title={channel?.name ?? '채널 정보'} onClose={() => setInfoOpen(false)}><div className="-m-5 flex max-h-[70dvh] flex-col">{panelEl('full')}</div></Modal>}
     </div>
   );
 }

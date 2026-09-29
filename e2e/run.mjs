@@ -1026,6 +1026,27 @@ await test('방송 권한 부여·회수 (⋮ 메뉴): 부여 → 방송 가능 
   await T.page.getByRole('button', { name: '방송 시작', exact: true }).first().click();
   await O.page.locator('video').first().waitFor({ timeout: 10000 });
   await O.page.waitForFunction(() => document.querySelector('video')?.videoWidth > 0, null, { timeout: 25000 });
+  // 방송 중 우측: 위 참여자(인원수) / 아래 채팅(절반), 분할선을 끌어 크기 조절
+  {
+    const sep = O.page.getByRole('separator');
+    await sep.waitFor({ timeout: 5000 });
+    assert(await O.page.getByText(/현재 \d+명 접속 중/).first().isVisible(), '참여자 창에 접속 인원수가 없음');
+    const hs = async () => O.page.evaluate(() => {
+      const sp = document.querySelector('[role=separator]');
+      return { top: sp.previousElementSibling.getBoundingClientRect().height, bottom: sp.nextElementSibling.getBoundingClientRect().height };
+    });
+    const h0 = await hs();
+    assert(Math.abs(h0.top - h0.bottom) < 24, `기본 분할이 절반이 아님 ${JSON.stringify(h0)}`);
+    const box = await sep.boundingBox();
+    await O.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await O.page.mouse.down();
+    await O.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 150, { steps: 6 });
+    await O.page.mouse.up();
+    const h1 = await hs();
+    assert(h1.bottom > h0.bottom + 100 && h1.top < h0.top - 100, `드래그로 크기가 바뀌지 않음 ${JSON.stringify([h0, h1])}`);
+    await O.page.screenshot({ path: path.join(out, 'desktop-live-split.png') });
+    await sep.dblclick();
+  }
   // 회수: 방송 중이면 방송도 종료
   // 채널 개설자에게는 회수 메뉴가 없고, 보유자 목록의 회수 버튼은 비활성화
   await O.page.getByRole('button', { name: '권한대상 관리 메뉴' }).first().click();

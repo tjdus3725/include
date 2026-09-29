@@ -34,9 +34,50 @@ interface Props {
   bansVersion: number;
   /** 일반 사용자가 관리자 계정을 눌렀을 때 (방송 요청 보내기) */
   onRequestBroadcast: (adminName: string) => void;
+  /** 방송 중에는 참여자 목록을 우측 상단 창으로 옮긴다 */
+  hideParticipants?: boolean;
+  /** 참여자 목록만 렌더링 (방송 중 우측 상단 창) */
+  participantsOnly?: boolean;
 }
 
 const roleBadge = { owner: '채널 관리자', admin: '서버 관리자', manager: '매니저', broadcaster: '방송 권한', member: '' } as const;
+
+/** 참여자 목록(역할 배지, 방송 요청, ⋮ 관리 메뉴) — 채널 패널과 방송 중 우측 상단 창에서 함께 쓴다 */
+export function ParticipantsList(p: Props) {
+  const { state } = p;
+  return (
+    <ul className="space-y-1">
+      {state.participants.map((u) => (
+        <li key={u.id} className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-ink-700">
+          {canRequestFrom(state.me?.role, p.canBroadcast, u.role) && u.id !== p.user.id ? (
+            <button className="flex min-w-0 flex-1 items-center gap-2.5 rounded text-left hover:underline focus-visible:outline-2 focus-visible:outline-mint-400" onClick={() => p.onRequestBroadcast(u.nickname)} title="눌러서 방송 요청 보내기" aria-label={`${u.nickname} 관리자에게 방송 요청 보내기`}>
+              <Avatar nickname={u.nickname} color={u.color} size={28} />
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: u.color }}>{u.nickname}</span>
+            </button>
+          ) : (
+            <>
+              <Avatar nickname={u.nickname} color={u.color} size={28} />
+              <span className="min-w-0 flex-1">
+                <span className="truncate text-sm font-semibold" style={{ color: u.color }}>{u.nickname}</span>
+                {u.id === p.user.id && <span className="ml-1 text-xs text-mist-500">(나)</span>}
+              </span>
+            </>
+          )}
+          {u.broadcasting && <span className="rounded bg-coral-500 px-1.5 py-px text-[10px] font-extrabold text-white">방송 중</span>}
+          {roleBadge[u.role] && <span className="rounded bg-mint-400/15 px-1.5 py-px text-[10px] font-bold text-mint-300">{roleBadge[u.role]}</span>}
+          {(p.canBan || p.canModerate) && u.id !== p.user.id && (() => {
+            const items = buildMemberMenu({
+              actorRole: state.me?.role, canModerate: p.canModerate, canBan: p.canBan, targetRole: u.role,
+              handlers: { setBroadcaster: (g) => p.onSetBroadcaster(u.id, u.nickname, g), setManager: (a) => p.onSetManager(u.id, u.nickname, a), kick: () => p.onKick(u.id, u.nickname) },
+            });
+            return items.length ? <MoreMenu label={`${u.nickname} 관리 메뉴`} items={items} /> : null;
+          })()}
+        </li>
+      ))}
+      {state.participants.length === 0 && <li className="text-sm text-mist-500">접속 중인 사람이 없습니다.</li>}
+    </ul>
+  );
+}
 
 export function ChannelPanel(p: Props) {
   const { state } = p;
@@ -61,6 +102,7 @@ export function ChannelPanel(p: Props) {
     p.onListManagers().then(setManagers).catch(() => {});
   }, [p.canModerate, ch?.id, state.status, p.bansVersion, state.participants]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  if (p.participantsOnly) return <ParticipantsList {...p} />;
   if (!ch) return <div className="p-4 text-sm text-mist-500">채널 정보를 불러오는 중…</div>;
   const live = state.broadcast.live;
   const httpsUrl = p.config.https ? p.config.https.url : null;
@@ -114,39 +156,12 @@ export function ChannelPanel(p: Props) {
         </div>
       )}
 
-      <div className={section}>
-        <h3 className={h}><Icon name="users" size={14} /> 참여자 · {state.participants.length}</h3>
-        <ul className="space-y-1">
-          {state.participants.map((u) => (
-            <li key={u.id} className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-ink-700">
-              {canRequestFrom(state.me?.role, p.canBroadcast, u.role) && u.id !== p.user.id ? (
-                <button className="flex min-w-0 flex-1 items-center gap-2.5 rounded text-left hover:underline focus-visible:outline-2 focus-visible:outline-mint-400" onClick={() => p.onRequestBroadcast(u.nickname)} title="눌러서 방송 요청 보내기" aria-label={`${u.nickname} 관리자에게 방송 요청 보내기`}>
-                  <Avatar nickname={u.nickname} color={u.color} size={28} />
-                  <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: u.color }}>{u.nickname}</span>
-                </button>
-              ) : (
-                <>
-                  <Avatar nickname={u.nickname} color={u.color} size={28} />
-                  <span className="min-w-0 flex-1">
-                    <span className="truncate text-sm font-semibold" style={{ color: u.color }}>{u.nickname}</span>
-                    {u.id === p.user.id && <span className="ml-1 text-xs text-mist-500">(나)</span>}
-                  </span>
-                </>
-              )}
-              {u.broadcasting && <span className="rounded bg-coral-500 px-1.5 py-px text-[10px] font-extrabold text-white">방송 중</span>}
-              {roleBadge[u.role] && <span className="rounded bg-mint-400/15 px-1.5 py-px text-[10px] font-bold text-mint-300">{roleBadge[u.role]}</span>}
-              {(p.canBan || p.canModerate) && u.id !== p.user.id && (() => {
-                const items = buildMemberMenu({
-                  actorRole: state.me?.role, canModerate: p.canModerate, canBan: p.canBan, targetRole: u.role,
-                  handlers: { setBroadcaster: (g) => p.onSetBroadcaster(u.id, u.nickname, g), setManager: (a) => p.onSetManager(u.id, u.nickname, a), kick: () => p.onKick(u.id, u.nickname) },
-                });
-                return items.length ? <MoreMenu label={`${u.nickname} 관리 메뉴`} items={items} /> : null;
-              })()}
-            </li>
-          ))}
-          {state.participants.length === 0 && <li className="text-sm text-mist-500">접속 중인 사람이 없습니다.</li>}
-        </ul>
-      </div>
+      {!p.hideParticipants && (
+        <div className={section}>
+          <h3 className={h}><Icon name="users" size={14} /> 참여자 · {state.participants.length}</h3>
+          <ParticipantsList {...p} />
+        </div>
+      )}
 
       {p.canModerate && (
         <div className={section}>
