@@ -656,7 +656,7 @@ await test('방송 종료: 시청 화면 정리, 브라우저 "공유 중지" �
   await streamer.page.getByRole('button', { name: '방송 종료' }).first().click();
   await viewer.page.locator('video').waitFor({ state: 'detached', timeout: 8000 });
   await expectText(viewer.page, '방송을 종료했습니다');
-  await viewer.page.getByText('LIVE', { exact: true }).first().waitFor({ state: 'detached', timeout: 5000 }).catch(() => { throw new Error('방송 종료 후에도 LIVE 표시가 남음'); });
+  await viewer.page.getByText('LIVE', { exact: true }).first().waitFor({ state: 'detached', timeout: 5000 }).catch(async () => { throw new Error('방송 종료 후에도 LIVE 표시가 남음: ' + JSON.stringify(await viewer.page.evaluate(() => [...document.querySelectorAll('*')].filter((e) => e.children.length === 0 && e.textContent.trim() === 'LIVE').map((e) => e.parentElement?.outerHTML.slice(0, 160))))); });
   assert((await streamer.page.locator('video').count()) === 0, '방송자 화면에 video 가 남음');
   // 다시 방송한 뒤 브라우저의 공유 중지(트랙 종료)를 재현
   await streamer.page.getByRole('button', { name: '방송 시작', exact: true }).first().click();
