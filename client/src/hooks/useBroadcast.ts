@@ -65,6 +65,7 @@ export function useBroadcast({ channelId, joined, epoch, live, canModerate, iceS
   const cleanupLocal = useCallback(() => {
     localRef.current?.getTracks().forEach((t) => { t.onended = null; t.stop(); });
     localRef.current = null;
+    shareRef.current = 'idle'; // 렌더 전에 뒤따르는 서버 이벤트가 상태를 덮어쓰지 않도록 즉시 반영
     for (const id of [...senders.current.keys()]) closeSender(id);
     setStream(null);
     setShare('idle');
