@@ -21,6 +21,8 @@ interface Props {
   onDelete: (m: Message) => void;
   onKick: (userId: string, nickname: string) => void;
   onSetBroadcaster: (userId: string, nickname: string, grant: boolean) => void;
+  /** 방송 권한이 없는 사용자에게만 전달: 관리자 닉네임을 누르면 방송 요청 팝업 */
+  onRequestBroadcast?: (adminName: string) => void;
 }
 
 export function Chat(p: Props) {
@@ -97,7 +99,7 @@ export function Chat(p: Props) {
       lastDay = dk; lastUser = null;
     }
     const grouped = m.kind === 'user' && m.userId === lastUser && m.createdAt - lastAt < 5 * 60_000;
-    rows.push(<MessageRow key={m.id} m={m} mine={m.userId === p.userId} grouped={grouped} canModerate={p.canModerate} ownerId={state.channel?.ownerId ?? null} targetRole={state.participants.find((u) => u.id === m.userId)?.role} onDelete={p.onDelete} onKick={p.onKick} onSetBroadcaster={p.onSetBroadcaster} />);
+    rows.push(<MessageRow key={m.id} m={m} mine={m.userId === p.userId} grouped={grouped} canModerate={p.canModerate} ownerId={state.channel?.ownerId ?? null} targetRole={state.participants.find((u) => u.id === m.userId)?.role} onRequestBroadcast={p.onRequestBroadcast} onDelete={p.onDelete} onKick={p.onKick} onSetBroadcaster={p.onSetBroadcaster} />);
     lastUser = m.kind === 'user' ? m.userId : null;
     lastAt = m.createdAt;
   }
@@ -150,8 +152,8 @@ function NoticeBar({ notice }: { notice: Notice }) {
   );
 }
 
-function MessageRow({ m, mine, grouped, canModerate, ownerId, targetRole, onDelete, onKick, onSetBroadcaster }: {
-  m: Message; mine: boolean; grouped: boolean; canModerate: boolean; ownerId: string | null; targetRole?: string;
+function MessageRow({ m, mine, grouped, canModerate, ownerId, targetRole, onRequestBroadcast, onDelete, onKick, onSetBroadcaster }: {
+  m: Message; mine: boolean; grouped: boolean; canModerate: boolean; ownerId: string | null; targetRole?: string; onRequestBroadcast?: (adminName: string) => void;
   onDelete: (m: Message) => void; onKick: (userId: string, nickname: string) => void;
   onSetBroadcaster: (userId: string, nickname: string, grant: boolean) => void;
 }) {
@@ -193,7 +195,11 @@ function MessageRow({ m, mine, grouped, canModerate, ownerId, targetRole, onDele
       <div className="min-w-0 max-w-[85%]">
         {!grouped && (
           <p className="mb-0.5 flex items-baseline gap-2">
-            <span className="truncate text-sm font-bold" style={{ color: m.color ?? undefined }}>{m.nickname ?? '알 수 없음'}</span>
+            {onRequestBroadcast && (targetRole === 'owner' || targetRole === 'admin') ? (
+              <button className="truncate text-sm font-bold hover:underline" style={{ color: m.color ?? undefined }} onClick={() => onRequestBroadcast(m.nickname ?? '')} title="눌러서 방송 요청 보내기">{m.nickname}</button>
+            ) : (
+              <span className="truncate text-sm font-bold" style={{ color: m.color ?? undefined }}>{m.nickname ?? '알 수 없음'}</span>
+            )}
             <time className="text-[11px] text-mist-500" dateTime={new Date(m.createdAt).toISOString()}>{fmtTime(m.createdAt)}</time>
           </p>
         )}

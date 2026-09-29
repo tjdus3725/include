@@ -1,5 +1,6 @@
 import type { AppConfig, ConnState, User } from '../lib/types';
 import { Icon } from './Icon';
+import type { ReactNode } from 'react';
 import { ProfileMenu } from './ProfileMenu';
 
 const connLabel: Record<ConnState, { text: string; dot: string }> = {
@@ -9,9 +10,11 @@ const connLabel: Record<ConnState, { text: string; dot: string }> = {
   disconnected: { text: '연결 끊김', dot: 'bg-coral-500' },
 };
 
-export function Header({ user, config, conn, query, onQuery, onToggleMenu, menuOpen, onUser, onLogout }: {
+export function Header({ user, config, conn, query, onQuery, onToggleMenu, menuOpen, onUser, onLogout, bell }: {
   user: User; config: AppConfig; conn: ConnState; query: string; onQuery: (q: string) => void;
   onToggleMenu: () => void; menuOpen: boolean; onUser: (u: User) => void; onLogout: () => void;
+  /** 관리자에게만 보이는 알림 아이콘 (계정 표시 왼쪽) */
+  bell?: ReactNode;
 }) {
   const c = connLabel[conn];
   return (
@@ -34,6 +37,7 @@ export function Header({ user, config, conn, query, onQuery, onToggleMenu, menuO
           <span className="hidden sm:inline">{c.text}</span>
           <span className="sr-only sm:hidden">{c.text}</span>
         </span>
+        {bell}
         <ProfileMenu user={user} config={config} onUser={onUser} onLogout={onLogout} />
       </div>
     </header>

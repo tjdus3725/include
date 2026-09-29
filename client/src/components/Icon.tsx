@@ -31,6 +31,7 @@ const paths = {
   radio: 'M4.9 19.1a10 10 0 0 1 0-14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M19.1 4.9a10 10 0 0 1 0 14.2M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
   check: 'M20 6 9 17l-5-5',
   moreVert: 'M12 5h.01M12 12h.01M12 19h.01',
+  bell: 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0',
 } as const;
 export type IconName = keyof typeof paths;
 

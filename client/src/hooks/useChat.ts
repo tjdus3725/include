@@ -41,7 +41,7 @@ function merge(base: Message[], incoming: Message[]): Message[] {
   return [...map.values()].sort((a, b) => a.id - b.id);
 }
 
-export function useChat(channelId: string | null, conn: ConnState, messageMax: number, isAdmin = false) {
+export function useChat(channelId: string | null, conn: ConnState, messageMax: number, isAdmin = false, anonymous = false) {
   const [state, setState] = useState<ChatState>(initial);
   const [pending, setPending] = useState<PendingMessage[]>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -67,7 +67,7 @@ export function useChat(channelId: string | null, conn: ConnState, messageMax: n
     const cur = stateRef.current;
     const lastId = loadedFor.current === channelId && cur.messages.length ? cur.messages[cur.messages.length - 1].id : undefined;
     setState((s) => (s.status === 'joined' ? s : { ...s, status: 'joining', error: null }));
-    emitAck<JoinAck>('channel:join', { channelId, lastId }, 10000)
+    emitAck<JoinAck>('channel:join', { channelId, lastId, anonymous }, 10000)
       .then((r) => {
         if (cancelled) return;
         loadedFor.current = channelId;
@@ -92,7 +92,7 @@ export function useChat(channelId: string | null, conn: ConnState, messageMax: n
         setState((s) => ({ ...s, status: e.code === 'BANNED' ? 'kicked' : 'error', error: e.message }));
       });
     return () => { cancelled = true; };
-  }, [channelId, conn, isAdmin]); // isAdmin 이 바뀌면(서버 관리자 인증) 재입장해 권한 정보를 갱신
+  }, [channelId, conn, isAdmin, anonymous]); // 서버 관리자 인증/입장 방식(닉네임·익명)이 바뀌면 재입장해 권한·신원을 갱신
 
   // 실시간 이벤트
   useEffect(() => {

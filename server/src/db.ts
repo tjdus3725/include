@@ -112,6 +112,26 @@ const MIGRATIONS: { name: string; sql: string }[] = [
     ALTER TABLE channel_roles_new RENAME TO channel_roles;
     `,
   },
+  {
+    name: '익명 입장(메시지 별칭)과 방송 권한 요청',
+    sql: `
+    -- 익명으로 입장한 사용자의 메시지는 그 시점의 별칭을 함께 저장한다
+    ALTER TABLE messages ADD COLUMN alias TEXT;
+
+    CREATE TABLE broadcast_requests (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id   TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      display_name TEXT NOT NULL,
+      anonymous    INTEGER NOT NULL DEFAULT 0,
+      status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','granted','dismissed')),
+      created_at   INTEGER NOT NULL,
+      resolved_at  INTEGER,
+      resolved_by  TEXT
+    );
+    CREATE INDEX idx_requests_channel ON broadcast_requests(channel_id, status);
+    `,
+  },
 ];
 
 const DEFAULT_CHANNELS = [

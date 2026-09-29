@@ -1,10 +1,12 @@
 import type { Channel } from '../lib/types';
 import { Icon } from './Icon';
 
-export function ChannelList({ channels, loading, error, activeId, query, onQuery, onSelect, onCreate, onRetry, showSearch }: {
+export function ChannelList({ channels: rawChannels, loading, error, activeId, query, onQuery, onSelect, onCreate, onRetry, showSearch }: {
   channels: Channel[]; loading: boolean; error: string | null; activeId: string | null; query: string;
   onQuery: (q: string) => void; onSelect: (id: string) => void; onCreate: () => void; onRetry: () => void; showSearch: boolean;
 }) {
+  // 방송 중인 방을 위로 (같은 그룹 안에서는 기존 순서 유지)
+  const channels = [...rawChannels].sort((a, b) => Number(!!b.live) - Number(!!a.live));
   return (
     <nav aria-label="채널 목록" className="flex min-h-0 flex-1 flex-col">
       {showSearch && (
@@ -14,7 +16,7 @@ export function ChannelList({ channels, loading, error, activeId, query, onQuery
         </div>
       )}
       <div className="flex items-center justify-between px-4 pb-1 pt-4">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-mist-500">채널 {channels.length > 0 && `· ${channels.length}`}</h2>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-mist-500">방송 방 목록 {channels.length > 0 && `· ${channels.length}`}</h2>
       </div>
       <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
         {loading && <li className="px-3 py-2 text-sm text-mist-500">불러오는 중…</li>}
@@ -31,7 +33,8 @@ export function ChannelList({ channels, loading, error, activeId, query, onQuery
           return (
             <li key={c.id}>
               <button onClick={() => onSelect(c.id)} aria-current={active ? 'page' : undefined}
-                className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-mint-400 ${active ? 'bg-ink-600 text-white' : 'text-mist-300 hover:bg-ink-700 hover:text-mist-100'}`}>
+                className={`group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-mint-400 ${active ? 'bg-ink-600 text-white ring-1 ring-mint-400/60' : 'text-mist-300 hover:bg-ink-700 hover:text-mist-100'}`}>
+                {active && <span className="absolute inset-y-2 left-0 w-1 rounded-r bg-mint-400" aria-hidden="true" />}
                 <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-mint-400/15 text-mint-300' : 'bg-ink-700 text-mist-400 group-hover:bg-ink-600'}`}>
                   <Icon name={c.live ? 'radio' : 'hash'} size={16} />
                 </span>
@@ -39,6 +42,7 @@ export function ChannelList({ channels, loading, error, activeId, query, onQuery
                   <span className="flex items-center gap-2">
                     <span className="truncate text-sm font-semibold">{c.name}</span>
                     {c.live && <span className="animate-pulse-dot shrink-0 rounded bg-coral-500 px-1.5 py-px text-[10px] font-extrabold tracking-wide text-white">LIVE</span>}
+                    {active && <span className="shrink-0 rounded bg-mint-400/20 px-1.5 py-px text-[10px] font-bold text-mint-300">현재 위치</span>}
                   </span>
                   <span className="block truncate text-xs text-mist-500">{c.description || (c.ownerNickname ? `${c.ownerNickname}님의 채널` : '설명이 없습니다')}</span>
                 </span>

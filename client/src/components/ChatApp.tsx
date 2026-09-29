@@ -8,22 +8,29 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import { api } from '../lib/api';
 import { socket } from '../lib/socket';
 import { useToast } from '../lib/toast';
-import type { AppConfig, Ban, Channel, ConnState, Message, User } from '../lib/types';
+import type { AppConfig, Ban, Channel, ConnState, EntryMode, Message, User } from '../lib/types';
+import { useRequests } from '../hooks/useRequests';
 import { ChannelList } from './ChannelList';
 import { ChannelPanel } from './ChannelPanel';
 import { Chat } from './Chat';
 import { ChatOverlay } from './ChatOverlay';
 import { CreateChannelDialog } from './CreateChannelDialog';
+import { EntryDialog } from './EntryDialog';
+import { LobbyScreen } from './LobbyScreen';
+import { NotificationBell } from './NotificationBell';
+import { RequestDialog } from './RequestDialog';
 import { Header } from './Header';
-import { Icon, LogoMark } from './Icon';
+import { Icon } from './Icon';
 import { KickDialog } from './KickDialog';
 import { Modal } from './Modal';
 import { Stage } from './Stage';
 
-const DEFAULT_CHANNEL = 'all';
 const parseHash = () => /^#\/c\/([A-Za-z0-9_-]+)$/.exec(location.hash)?.[1] ?? null;
-const readLast = () => { try { return localStorage.getItem('inchat:lastChannel'); } catch { return null; } };
-const writeLast = (id: string) => { try { localStorage.setItem('inchat:lastChannel', id); } catch { /* 저장 불가 환경 */ } };
+const IDENTITY_KEY = 'inchat:entry';
+const readIdentities = (): Record<string, EntryMode> => {
+  try { return JSON.parse(sessionStorage.getItem(IDENTITY_KEY) ?? '{}') as Record<string, EntryMode>; } catch { return {}; }
+};
+const writeIdentities = (m: Record<string, EntryMode>) => { try { sessionStorage.setItem(IDENTITY_KEY, JSON.stringify(m)); } catch { /* 저장 불가 환경 */ } };
 
 export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   user: User; config: AppConfig; onUser: (u: User) => void; onLogout: () => void; onAuthLost: () => void;
@@ -33,7 +40,11 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const [query, setQuery] = useState('');
   const { channels, loading, error: chError, refresh } = useChannels(conn, query);
-  const [activeId, setActiveId] = useState<string | null>(() => parseHash() ?? readLast() ?? DEFAULT_CHANNEL);
+  // 입장 방식(내 닉네임/익명)은 방마다 고른 값을 이 탭에서 기억한다. 아직 고르지 않은 방은 입장 전에 반드시 묻는다.
+  const [identities, setIdentities] = useState<Record<string, EntryMode>>(readIdentities);
+  const [activeId, setActiveId] = useState<string | null>(() => { const h = parseHash(); return h && readIdentities()[h] ? h : null; });
+  const [entryFor, setEntryFor] = useState<string | null>(() => { const h = parseHash(); return h && !readIdentities()[h] ? h : null; });
+  const [requestAdmin, setRequestAdmin] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -42,33 +53,45 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   const [overlayOn, setOverlayOn] = useState(true);
   const [pipWin, setPipWin] = useState<Window | null>(null);
 
-  const select = useCallback((id: string) => {
+  const enter = useCallback((id: string, mode: EntryMode) => {
+    setIdentities((m) => { const next = { ...m, [id]: mode }; writeIdentities(next); return next; });
     setActiveId(id);
+    setEntryFor(null);
     setMenuOpen(false);
     setInfoOpen(false);
   }, []);
-  /** 채널 퇴장: 서버에 퇴장을 알리고(useChat 정리 단계) 채널 선택 화면으로 돌아간다 */
+  /** 방을 고르면 입장 방식(내 닉네임/익명)을 먼저 묻는다 */
+  const select = useCallback((id: string) => {
+    setEntryFor(id);
+    setMenuOpen(false);
+    setInfoOpen(false);
+  }, []);
+  /** 채널 퇴장: 서버에 퇴장을 알리고(useChat 정리 단계) 로비로 돌아간다 */
   const leave = useCallback(() => {
     setActiveId(null);
     setInfoOpen(false);
-    setMenuOpen(true);
+    setMenuOpen(false);
   }, []);
   useEffect(() => {
     if (!activeId) {
-      try { localStorage.removeItem('inchat:lastChannel'); } catch { /* 저장 불가 환경 */ }
-      if (parseHash()) history.replaceState(null, '', location.pathname + location.search);
+      if (parseHash() && !entryFor) history.replaceState(null, '', location.pathname + location.search);
       return;
     }
-    writeLast(activeId);
     if (parseHash() !== activeId) history.replaceState(null, '', `#/c/${activeId}`);
-  }, [activeId]);
+  }, [activeId, entryFor]);
   useEffect(() => {
-    const on = () => { const h = parseHash(); if (h) setActiveId(h); };
+    const on = () => {
+      const h = parseHash();
+      if (!h) return;
+      const known = readIdentities()[h];
+      if (known) enter(h, known); else setEntryFor(h);
+    };
     window.addEventListener('hashchange', on);
     return () => window.removeEventListener('hashchange', on);
-  }, []);
+  }, [enter]);
 
-  const chat = useChat(activeId, conn, config.limits.messageMax, user.isAdmin);
+  const anonymous = !!activeId && identities[activeId] === 'anon';
+  const chat = useChat(activeId, conn, config.limits.messageMax, user.isAdmin, anonymous);
   const { state } = chat;
   const canModerate = !!state.me?.canModerate;
   const canBroadcast = !!state.me?.canBroadcast;
@@ -76,13 +99,23 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
     channelId: activeId, joined: state.status === 'joined', epoch: state.epoch,
     live: state.broadcast, canBroadcast, iceServers: config.iceServers,
   });
+  const canReview = user.isAdmin || channels.some((c) => c.ownerId === user.id);
+  const reqs = useRequests(conn, canReview);
+  // 방송 권한을 새로 받으면 알려준다
+  const prevCan = useRef(false);
+  useEffect(() => {
+    if (state.status === 'joined') {
+      if (canBroadcast && !prevCan.current && state.epoch > 1) toast('방송 권한이 부여되었습니다. 이제 이 채널에서 방송을 시작할 수 있어요.', 'success');
+      prevCan.current = canBroadcast;
+    }
+  }, [canBroadcast, state.status, state.epoch, toast]);
   const live = state.broadcast.live || bc.isSharingHere;
   const sharingElsewhere = bc.isSharing && !bc.isSharingHere;
   const shareChannel = channels.find((c) => c.id === bc.shareChannelId) ?? null;
   const activeMeta = useMemo(() => channels.find((c) => c.id === activeId) ?? null, [channels, activeId]);
   const channel = state.channel ?? activeMeta;
 
-  useEffect(() => { document.title = channel ? `${channel.name} · InChat` : 'InChat'; }, [channel]);
+  useEffect(() => { document.title = activeId && channel ? `${channel.name} · InChat` : 'InChat 로비'; }, [channel, activeId]);
 
   // ---- 관리 동작 (서버가 최종 권한 검증) ----
   const guard = async (fn: () => Promise<unknown>, ok?: string) => {
@@ -136,11 +169,11 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
     try {
       await api.deleteChannel(channel.id);
       toast('채널을 삭제했습니다.', 'success');
-      select(DEFAULT_CHANNEL);
+      leave();
       void refresh();
     } catch (e) { toast((e as Error).message, 'error'); }
   };
-  const onCreated = (c: Channel) => { setCreateOpen(false); void refresh(); select(c.id); toast(`"${c.name}" 채널을 만들었습니다.`, 'success'); };
+  const onCreated = (c: Channel) => { setCreateOpen(false); void refresh(); enter(c.id, 'nick'); toast(`"${c.name}" 채널을 만들었습니다.`, 'success'); };
 
   // ---- 조각 ----
   const panel = (
@@ -156,6 +189,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
       onListBroadcasters={async () => (await chat.actions.listBroadcasters()).broadcasters}
       onUnban={async (uid): Promise<Ban[]> => { const r = await chat.actions.unban(uid); toast('이용 제한을 해제했습니다.', 'success'); return r.bans; }}
       onDeleteChannel={() => void onDeleteChannel()} bansVersion={bansVersion}
+      onRequestBroadcast={(name) => setRequestAdmin(name)}
     />
   );
   const chatEl = (
@@ -164,6 +198,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
       loadingOlder={chat.loadingOlder} canModerate={canModerate}
       onSend={chat.send} onRetry={chat.retry} onDiscard={chat.discard} onLoadOlder={() => void chat.loadOlder()}
       onDelete={onDelete} onKick={(userId, nickname) => setKickTarget({ userId, nickname })} onSetBroadcaster={onSetBroadcaster}
+      onRequestBroadcast={canBroadcast ? undefined : (name) => setRequestAdmin(name)}
     />
   );
   const stage = live ? (
@@ -218,7 +253,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
         <p className="mt-3 text-sm leading-relaxed text-mist-200">{state.error}</p>
         <div className="mt-5 flex justify-center gap-2">
           {state.status === 'error' && conn === 'connected' && <button className="btn-secondary" onClick={() => { const id = activeId; setActiveId(null); setTimeout(() => setActiveId(id), 0); }}>다시 시도</button>}
-          {activeId !== DEFAULT_CHANNEL && <button className="btn-primary" onClick={() => select(DEFAULT_CHANNEL)}>전체 채팅으로 이동</button>}
+          <button className="btn-primary" onClick={leave}>로비로 이동</button>
         </div>
       </div>
     </div>
@@ -226,19 +261,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
 
   let content: React.ReactNode;
   if (!activeId) {
-    content = (
-      <div className="flex min-w-0 flex-1 items-center justify-center p-6">
-        <div className="max-w-sm text-center">
-          <span className="mx-auto block w-fit"><LogoMark size={56} /></span>
-          <h1 className="mt-4 text-lg font-bold">채널에서 나갔어요</h1>
-          <p className="mt-1.5 text-sm leading-relaxed text-mist-400">참여할 채널을 선택하거나 새 채널을 만들어 보세요.</p>
-          <div className="mt-5 flex justify-center gap-2">
-            <button className="btn-primary" onClick={() => select(DEFAULT_CHANNEL)}>전체 채팅으로 입장</button>
-            <button className="btn-secondary" onClick={() => setCreateOpen(true)}>채널 만들기</button>
-          </div>
-        </div>
-      </div>
-    );
+    content = <LobbyScreen user={user} channels={channels} loading={loading} onPick={(c) => select(c.id)} onCreate={() => setCreateOpen(true)} />;
   } else if (blocked) content = <div className="flex min-w-0 flex-1 flex-col">{channelHeader}{blockedEl}</div>;
   else if (isDesktop) {
     content = (
@@ -264,7 +287,8 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
 
   return (
     <div className="flex h-dvh flex-col">
-      <Header user={user} config={config} conn={conn} query={query} onQuery={setQuery} onToggleMenu={() => setMenuOpen((o) => !o)} menuOpen={menuOpen} onUser={onUser} onLogout={onLogout} />
+      <Header user={user} config={config} conn={conn} query={query} onQuery={setQuery} onToggleMenu={() => setMenuOpen((o) => !o)} menuOpen={menuOpen} onUser={onUser} onLogout={onLogout}
+        bell={canReview ? <NotificationBell requests={reqs.requests} onGrant={reqs.grant} onDismiss={reqs.dismiss} /> : undefined} />
       <ConnectionBanner conn={conn} />
       {sharingElsewhere && (
         <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-coral-500/40 bg-coral-500/10 px-4 py-2 text-sm">
@@ -272,7 +296,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
           <span className="min-w-0 flex-1 text-mist-100">
             <b>{shareChannel?.name ?? '다른 채널'}</b>에서 방송 중입니다 · 시청자 {bc.viewerCount}명 <span className="text-mist-400">(다른 채널에 있어도 방송은 계속됩니다)</span>
           </span>
-          <button className="btn-secondary !py-1 text-xs" onClick={() => bc.shareChannelId && select(bc.shareChannelId)}>방송 채널로 이동</button>
+          <button className="btn-secondary !py-1 text-xs" onClick={() => bc.shareChannelId && enter(bc.shareChannelId, identities[bc.shareChannelId] ?? 'nick')}>방송 채널로 이동</button>
           <button className="btn-danger !py-1 text-xs" onClick={() => void bc.stop()}><Icon name="stop" size={12} /> 방송 종료</button>
         </div>
       )}
@@ -296,6 +320,15 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
         <main className="flex min-h-0 min-w-0 flex-1">{content}</main>
       </div>
       {createOpen && <CreateChannelDialog config={config} onClose={() => setCreateOpen(false)} onCreated={onCreated} />}
+      {entryFor && (
+        <EntryDialog
+          channel={channels.find((c) => c.id === entryFor) ?? { id: entryFor, name: '채널', description: '' }}
+          user={user} initial={identities[entryFor] ?? 'nick'}
+          onCancel={() => { setEntryFor(null); if (!activeId && parseHash()) history.replaceState(null, '', location.pathname + location.search); }}
+          onConfirm={(mode) => enter(entryFor, mode)}
+        />
+      )}
+      {requestAdmin && activeId && <RequestDialog channelId={activeId} channelName={channel?.name ?? ''} adminName={requestAdmin} onClose={() => setRequestAdmin(null)} />}
       {kickTarget && <KickDialog nickname={kickTarget.nickname} onClose={() => setKickTarget(null)} onConfirm={onKickConfirm} />}
       {pipWin && createPortal(
         <div style={{ height: '100vh', padding: 12, boxSizing: 'border-box' }}>

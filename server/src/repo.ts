@@ -34,6 +34,10 @@ export interface MessageDTO {
   body: string;
   createdAt: number;
   deleted: boolean;
+  /** 보낸 클라이언트가 붙인 임시 ID (전송 중 메시지와 서버 메시지를 맞추는 용도) */
+  clientId: string | null;
+  /** 익명으로 보낸 메시지 여부 (nickname 에는 별칭이 들어간다) */
+  anonymous: boolean;
 }
 export interface BanRow {
   channel_id: string;
@@ -234,11 +238,11 @@ export function roleOf(user: UserRow, channelId: string): 'owner' | 'admin' | 'b
 }
 
 // ---------- 메시지 ----------
-const MSG_SELECT = `SELECT m.id, m.channel_id, m.kind, m.body, m.created_at, m.deleted_at, m.user_id, u.nickname, u.color
+const MSG_SELECT = `SELECT m.id, m.channel_id, m.kind, m.body, m.created_at, m.deleted_at, m.user_id, m.client_id, m.alias, u.nickname, u.color
   FROM messages m LEFT JOIN users u ON u.id = m.user_id`;
 type MsgRow = {
   id: number; channel_id: string; kind: 'user' | 'system'; body: string; created_at: number;
-  deleted_at: number | null; user_id: string | null; nickname: string | null; color: string | null;
+  deleted_at: number | null; user_id: string | null; client_id: string | null; alias: string | null; nickname: string | null; color: string | null;
 };
 function toDTO(r: MsgRow): MessageDTO {
   return {
@@ -246,17 +250,20 @@ function toDTO(r: MsgRow): MessageDTO {
     channelId: r.channel_id,
     kind: r.kind,
     userId: r.user_id,
-    nickname: r.nickname,
-    color: r.color,
+    nickname: r.alias ?? r.nickname,
+    color: r.alias ? ANON_COLOR : r.color,
     body: r.deleted_at ? '' : r.body,
     createdAt: r.created_at,
     deleted: !!r.deleted_at,
+    clientId: r.client_id,
+    anonymous: !!r.alias,
   };
 }
-export function insertMessage(channelId: string, userId: string | null, kind: 'user' | 'system', body: string, clientId?: string): MessageDTO {
+export const ANON_COLOR = '#94a3b8';
+export function insertMessage(channelId: string, userId: string | null, kind: 'user' | 'system', body: string, clientId?: string, alias?: string): MessageDTO {
   const info = db
-    .prepare('INSERT INTO messages (channel_id, user_id, kind, body, client_id, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(channelId, userId, kind, body, clientId ?? null, Date.now());
+    .prepare('INSERT INTO messages (channel_id, user_id, kind, body, client_id, alias, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(channelId, userId, kind, body, clientId ?? null, alias ?? null, Date.now());
   return getMessage(Number(info.lastInsertRowid))!;
 }
 export function getMessage(id: number): MessageDTO | undefined {
@@ -320,13 +327,13 @@ export function getActiveBan(channelId: string, userId: string, ipHash?: string 
     )
     .get(...(byIp ? [channelId, now, userId, ipHash] : [channelId, now, userId])) as BanRow | undefined;
 }
-export function addBan(channelId: string, target: UserRow, bannedBy: string, reason: string, expiresAt: number | null) {
+export function addBan(channelId: string, target: UserRow, bannedBy: string, reason: string, expiresAt: number | null, displayName?: string) {
   db.prepare(
     `INSERT INTO bans (channel_id, user_id, nickname, ip_hash, reason, banned_by, created_at, expires_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(channel_id, user_id) DO UPDATE SET nickname = excluded.nickname, ip_hash = excluded.ip_hash,
        reason = excluded.reason, banned_by = excluded.banned_by, created_at = excluded.created_at, expires_at = excluded.expires_at`,
-  ).run(channelId, target.id, target.nickname, target.last_ip_hash, reason, bannedBy, Date.now(), expiresAt);
+  ).run(channelId, target.id, displayName ?? target.nickname, target.last_ip_hash, reason, bannedBy, Date.now(), expiresAt);
 }
 export function removeBan(channelId: string, userId: string): boolean {
   return db.prepare('DELETE FROM bans WHERE channel_id = ? AND user_id = ?').run(channelId, userId).changes > 0;
@@ -336,4 +343,42 @@ export function listBans(channelId: string) {
       WHERE channel_id = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC`).all(channelId, Date.now()) as {
     user_id: string; nickname: string; reason: string; created_at: number; expires_at: number | null;
   }[]).map((b) => ({ userId: b.user_id, nickname: b.nickname, reason: b.reason, createdAt: b.created_at, expiresAt: b.expires_at }));
+}
+
+// ---------- 방송 권한 요청 ----------
+export interface RequestDTO { id: number; channelId: string; channelName: string; userId: string; displayName: string; anonymous: boolean; createdAt: number }
+type ReqRow = { id: number; channel_id: string; channel_name: string; user_id: string; display_name: string; anonymous: number; status: string; created_at: number };
+const REQ_SELECT = `SELECT r.id, r.channel_id, c.name AS channel_name, r.user_id, r.display_name, r.anonymous, r.status, r.created_at
+  FROM broadcast_requests r JOIN channels c ON c.id = r.channel_id`;
+const reqDTO = (r: ReqRow): RequestDTO => ({ id: r.id, channelId: r.channel_id, channelName: r.channel_name, userId: r.user_id, displayName: r.display_name, anonymous: !!r.anonymous, createdAt: r.created_at });
+export function getPendingRequest(channelId: string, userId: string): RequestDTO | undefined {
+  const r = db.prepare(`${REQ_SELECT} WHERE r.channel_id = ? AND r.user_id = ? AND r.status = 'pending'`).get(channelId, userId) as ReqRow | undefined;
+  return r && reqDTO(r);
+}
+export function createRequest(channelId: string, userId: string, displayName: string, anonymous: boolean): RequestDTO {
+  const info = db.prepare(`INSERT INTO broadcast_requests (channel_id, user_id, display_name, anonymous, created_at) VALUES (?, ?, ?, ?, ?)`).run(channelId, userId, displayName, anonymous ? 1 : 0, Date.now());
+  return reqDTO(db.prepare(`${REQ_SELECT} WHERE r.id = ?`).get(Number(info.lastInsertRowid)) as ReqRow);
+}
+export function getRequest(id: number): (RequestDTO & { status: string }) | undefined {
+  const r = db.prepare(`${REQ_SELECT} WHERE r.id = ?`).get(id) as ReqRow | undefined;
+  return r && { ...reqDTO(r), status: r.status };
+}
+/** 검토 권한이 있는 요청 목록: 서버 관리자는 전부, 채널 소유자는 자기 채널의 요청 (오래된 순이 아닌 최신순) */
+export function listRequestsFor(user: UserRow): RequestDTO[] {
+  const rows = user.is_admin === 1
+    ? (db.prepare(`${REQ_SELECT} WHERE r.status = 'pending' ORDER BY r.created_at DESC LIMIT 100`).all() as ReqRow[])
+    : (db.prepare(`${REQ_SELECT} WHERE r.status = 'pending' AND r.channel_id IN (SELECT channel_id FROM channel_roles WHERE user_id = ? AND role = 'owner') ORDER BY r.created_at DESC LIMIT 100`).all(user.id) as ReqRow[]);
+  return rows.map(reqDTO);
+}
+export function resolveRequest(id: number, status: 'granted' | 'dismissed', by: string): boolean {
+  return db.prepare(`UPDATE broadcast_requests SET status = ?, resolved_at = ?, resolved_by = ? WHERE id = ? AND status = 'pending'`).run(status, Date.now(), by, id).changes > 0;
+}
+/** 권한을 부여/회수하면 그 사용자의 대기 중 요청을 함께 정리하고 정리된 ID 를 돌려준다 */
+export function resolvePendingFor(channelId: string, userId: string, status: 'granted' | 'dismissed', by: string): number[] {
+  const ids = (db.prepare(`SELECT id FROM broadcast_requests WHERE channel_id = ? AND user_id = ? AND status = 'pending'`).all(channelId, userId) as { id: number }[]).map((x) => x.id);
+  for (const id of ids) resolveRequest(id, status, by);
+  return ids;
+}
+export function ownsAnyChannel(userId: string): boolean {
+  return !!db.prepare(`SELECT 1 FROM channel_roles WHERE user_id = ? AND role = 'owner' LIMIT 1`).get(userId);
 }

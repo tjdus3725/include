@@ -75,7 +75,9 @@ export function validateMessageBody(raw: unknown, max = config.limits.messageMax
 const id = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
 export const schemas = {
   channelId: z.object({ channelId: id }),
-  join: z.object({ channelId: id, lastId: z.number().int().nonnegative().optional() }),
+  join: z.object({ channelId: id, lastId: z.number().int().nonnegative().optional(), anonymous: z.boolean().optional() }),
+  dismiss: z.object({ requestId: z.number().int().positive() }),
+  none: z.object({}).passthrough(),
   send: z.object({ channelId: id, clientId: z.string().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/), body: z.unknown() }),
   del: z.object({ channelId: id, messageId: z.number().int().positive() }),
   notice: z.object({ channelId: id, body: z.unknown() }),

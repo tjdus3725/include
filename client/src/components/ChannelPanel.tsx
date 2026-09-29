@@ -28,6 +28,8 @@ interface Props {
   onListBroadcasters: () => Promise<Broadcaster[]>;
   onDeleteChannel: () => void;
   bansVersion: number;
+  /** 일반 사용자가 관리자 계정을 눌렀을 때 (방송 요청 보내기) */
+  onRequestBroadcast: (adminName: string) => void;
 }
 
 const roleBadge = { owner: '채널 관리자', admin: '서버 관리자', broadcaster: '방송 권한', member: '' } as const;
@@ -116,11 +118,20 @@ export function ChannelPanel(p: Props) {
         <ul className="space-y-1">
           {state.participants.map((u) => (
             <li key={u.id} className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-ink-700">
-              <Avatar nickname={u.nickname} color={u.color} size={28} />
-              <span className="min-w-0 flex-1">
-                <span className="truncate text-sm font-semibold" style={{ color: u.color }}>{u.nickname}</span>
-                {u.id === p.user.id && <span className="ml-1 text-xs text-mist-500">(나)</span>}
-              </span>
+              {!p.canBroadcast && (u.role === 'owner' || u.role === 'admin') && u.id !== p.user.id ? (
+                <button className="flex min-w-0 flex-1 items-center gap-2.5 rounded text-left hover:underline focus-visible:outline-2 focus-visible:outline-mint-400" onClick={() => p.onRequestBroadcast(u.nickname)} title="눌러서 방송 요청 보내기" aria-label={`${u.nickname} 관리자에게 방송 요청 보내기`}>
+                  <Avatar nickname={u.nickname} color={u.color} size={28} />
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: u.color }}>{u.nickname}</span>
+                </button>
+              ) : (
+                <>
+                  <Avatar nickname={u.nickname} color={u.color} size={28} />
+                  <span className="min-w-0 flex-1">
+                    <span className="truncate text-sm font-semibold" style={{ color: u.color }}>{u.nickname}</span>
+                    {u.id === p.user.id && <span className="ml-1 text-xs text-mist-500">(나)</span>}
+                  </span>
+                </>
+              )}
               {u.broadcasting && <span className="rounded bg-coral-500 px-1.5 py-px text-[10px] font-extrabold text-white">방송 중</span>}
               {roleBadge[u.role] && <span className="rounded bg-mint-400/15 px-1.5 py-px text-[10px] font-bold text-mint-300">{roleBadge[u.role]}</span>}
               {p.canModerate && u.id !== p.user.id && (u.role === 'member' || u.role === 'broadcaster') && (

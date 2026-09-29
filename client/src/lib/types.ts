@@ -21,7 +21,7 @@ export interface ChannelStat extends LiveInfo { id: string; onlineCount: number 
 export interface Message {
   id: number; channelId: string; kind: 'user' | 'system'; userId: string | null;
   nickname: string | null; color: string | null; body: string; createdAt: number;
-  deleted: boolean; clientId: string | null;
+  deleted: boolean; clientId: string | null; anonymous: boolean;
 }
 export interface PendingMessage { clientId: string; body: string; createdAt: number; status: 'sending' | 'failed'; error?: string }
 
@@ -34,3 +34,7 @@ export interface ErrorPayload { code: string; message: string; retryAfterMs?: nu
 export type Ack<T = object> = ({ ok: true } & T) | { ok: false; error: ErrorPayload };
 
 export type ConnState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
+
+/** 방송 권한 요청 (일반 사용자 → 관리자) */
+export interface BroadcastRequest { id: number; channelId: string; channelName: string; userId: string; displayName: string; anonymous: boolean; createdAt: number }
+export type EntryMode = 'nick' | 'anon';
