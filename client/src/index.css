@@ -67,3 +67,6 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in, .animate-pulse-dot { animation: none; }
 }
+
+/* 채팅 오버레이(OBS 브라우저 소스 등)용 투명 배경 */
+.overlay-transparent, .overlay-transparent body, .overlay-transparent #root { background: transparent !important; }

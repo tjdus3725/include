@@ -51,7 +51,7 @@ export function isLive(channelId: string): boolean {
 }
 export function liveInfo(channelId: string) {
   const b = broadcasts.get(channelId);
-  return b ? { live: true as const, broadcaster: b.nickname, startedAt: b.startedAt, hasAudio: b.hasAudio, viewerCount: b.viewers.size } : { live: false as const };
+  return b ? { live: true as const, broadcaster: b.nickname, broadcasterId: b.userId, startedAt: b.startedAt, hasAudio: b.hasAudio, viewerCount: b.viewers.size } : { live: false as const };
 }
 export function totalOnlineUsers(): number {
   const s = new Set<string>();
@@ -450,7 +450,7 @@ export function initRealtime(server: Server) {
         startedAt: Date.now(), hasAudio: d.hasAudio, viewers: new Map(),
       };
       broadcasts.set(d.channelId, b);
-      io.to(room(d.channelId)).emit('broadcast:started', { channelId: d.channelId, broadcaster: b.nickname, startedAt: b.startedAt, hasAudio: b.hasAudio });
+      io.to(room(d.channelId)).emit('broadcast:started', { channelId: d.channelId, broadcaster: b.nickname, broadcasterId: b.userId, startedAt: b.startedAt, hasAudio: b.hasAudio });
       postSystem(d.channelId, `${user.nickname}님이 방송을 시작했습니다.`);
       scheduleFlush(d.channelId);
     });
@@ -506,7 +506,7 @@ export function initRealtime(server: Server) {
 function broadcastSummary(channelId: string, socket: S) {
   const b = broadcasts.get(channelId);
   if (!b) return { live: false };
-  return { live: true, broadcaster: b.nickname, startedAt: b.startedAt, hasAudio: b.hasAudio, viewerCount: b.viewers.size, mine: b.socketId === socket.id };
+  return { live: true, broadcaster: b.nickname, broadcasterId: b.userId, startedAt: b.startedAt, hasAudio: b.hasAudio, viewerCount: b.viewers.size, mine: b.socketId === socket.id };
 }
 
 export function channelDTO(ch: repo.ChannelRow & { owner_id: string | null; owner_nickname: string | null }) {

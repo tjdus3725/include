@@ -11,7 +11,7 @@ export interface AppConfig {
   onlineUsers: number;
 }
 
-export interface LiveInfo { live: boolean; broadcaster?: string; startedAt?: number; hasAudio?: boolean; viewerCount?: number }
+export interface LiveInfo { live: boolean; broadcaster?: string; broadcasterId?: string; startedAt?: number; hasAudio?: boolean; viewerCount?: number }
 export interface Channel extends LiveInfo {
   id: string; name: string; description: string; isDefault: boolean;
   ownerId: string | null; ownerNickname: string | null; createdAt: number; onlineCount: number;

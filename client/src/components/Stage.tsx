@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { ViewState } from '../hooks/useBroadcast';
 import type { LiveInfo } from '../lib/types';
 import { fmtElapsed } from '../lib/util';
@@ -15,9 +16,14 @@ interface Props {
   hasAudio: boolean;
   onStop: () => void;
   onRetry: () => void;
+  /** 방송자 미리보기 위에 겹쳐 그릴 채팅 오버레이 (방송자 화면에서만 전달) */
+  overlay?: ReactNode;
+  overlayOn?: boolean;
+  onToggleOverlay?: () => void;
+  onPopOut?: () => void;
 }
 
-export function Stage({ stream, isSharing, starting, view, error, live, viewerCount, hasAudio, onStop, onRetry }: Props) {
+export function Stage({ stream, isSharing, starting, view, error, live, viewerCount, hasAudio, onStop, onRetry, overlay, overlayOn, onToggleOverlay, onPopOut }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const [muted, setMuted] = useState(false);
@@ -75,6 +81,10 @@ export function Stage({ stream, isSharing, starting, view, error, live, viewerCo
       <div ref={box} className="group relative aspect-video max-h-[62dvh] w-full overflow-hidden bg-black lg:max-h-none lg:rounded-xl" aria-label="방송 화면">
         <video ref={video} playsInline autoPlay muted={isSharing || muted} className={`h-full w-full bg-black object-contain ${showVideo ? '' : 'invisible'}`} />
 
+        {isSharing && overlayOn && overlay && (
+          <div className="pointer-events-none absolute bottom-14 left-3 top-12 w-[46%] max-w-md">{overlay}</div>
+        )}
+
         {busy && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink-950/85 text-sm text-mist-300" role="status">
             <span className="h-8 w-8 animate-spin rounded-full border-2 border-mint-400 border-t-transparent" />
@@ -112,6 +122,16 @@ export function Stage({ stream, isSharing, starting, view, error, live, viewerCo
           <button className="btn-ghost !p-2 !text-white" onClick={toggleFull} aria-label={full ? '전체 화면 종료' : '전체 화면'}>
             <Icon name={full ? 'shrink' : 'expand'} size={20} />
           </button>
+          {isSharing && onToggleOverlay && (
+            <button className="btn-ghost !px-2 !py-1.5 text-xs !text-white" onClick={onToggleOverlay} aria-pressed={overlayOn} title="내 방송 화면 위에 채팅 표시">
+              <Icon name="users" size={14} /> 채팅 {overlayOn ? '숨기기' : '표시'}
+            </button>
+          )}
+          {isSharing && onPopOut && (
+            <button className="btn-ghost !px-2 !py-1.5 text-xs !text-white" onClick={onPopOut} title="다른 창 위에 떠 있는 채팅 창 열기">
+              <Icon name="expand" size={14} /> 채팅 창 띄우기
+            </button>
+          )}
           {isSharing && <button className="btn-danger !py-1.5" onClick={onStop}><Icon name="stop" size={14} /> 방송 종료</button>}
         </div>
       </div>

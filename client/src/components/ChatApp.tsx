@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useBroadcast } from '../hooks/useBroadcast';
 import { useChannels } from '../hooks/useChannels';
 import { useChat } from '../hooks/useChat';
@@ -11,6 +12,7 @@ import type { AppConfig, Ban, Channel, ConnState, Message, User } from '../lib/t
 import { ChannelList } from './ChannelList';
 import { ChannelPanel } from './ChannelPanel';
 import { Chat } from './Chat';
+import { ChatOverlay } from './ChatOverlay';
 import { CreateChannelDialog } from './CreateChannelDialog';
 import { Header } from './Header';
 import { Icon, LogoMark } from './Icon';
@@ -37,6 +39,8 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   const [createOpen, setCreateOpen] = useState(false);
   const [kickTarget, setKickTarget] = useState<{ userId: string; nickname: string } | null>(null);
   const [bansVersion, setBansVersion] = useState(0);
+  const [overlayOn, setOverlayOn] = useState(true);
+  const [pipWin, setPipWin] = useState<Window | null>(null);
 
   const select = useCallback((id: string) => {
     setActiveId(id);
@@ -94,6 +98,32 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
     setBansVersion((v) => v + 1);
     toast(`${kickTarget.nickname}님을 강퇴했습니다.`, 'success');
   };
+  /** 채팅 창 띄우기: Chrome/Edge 는 항상 위에 떠 있는 PiP 창, 그 외에는 팝업 창 */
+  const popOutChat = async () => {
+    const dpip = (window as unknown as { documentPictureInPicture?: { requestWindow: (o: object) => Promise<Window> } }).documentPictureInPicture;
+    if (dpip) {
+      try {
+        const w = await dpip.requestWindow({ width: 380, height: 560 });
+        for (const ss of Array.from(document.styleSheets)) {
+          try {
+            const st = w.document.createElement('style');
+            st.textContent = Array.from(ss.cssRules).map((r) => r.cssText).join('\n');
+            w.document.head.appendChild(st);
+          } catch { /* 접근할 수 없는 스타일시트는 건너뜀 */ }
+        }
+        w.document.body.style.cssText = 'margin:0;background:#0b1220;font-family:system-ui,"Malgun Gothic","Apple SD Gothic Neo",sans-serif';
+        w.addEventListener('pagehide', () => setPipWin(null));
+        setPipWin(w);
+        return;
+      } catch { /* 지원하지 않거나 거부되면 팝업으로 */ }
+    }
+    if (!bc.shareChannelId) return;
+    const win = window.open(`${location.pathname}#/overlay/${bc.shareChannelId}`, 'inchat-overlay', 'popup,width=380,height=560');
+    if (!win) toast('팝업이 차단되었습니다. 브라우저의 팝업 허용 후 다시 눌러 주세요.', 'error');
+  };
+  // 방송이 끝나면 떠 있던 PiP 채팅 창도 닫는다
+  useEffect(() => { if (!bc.isSharing && pipWin) { pipWin.close(); setPipWin(null); } }, [bc.isSharing, pipWin]);
+
   const onSetBroadcaster = (userId: string, nickname: string, grant: boolean) => {
     if (!grant && !window.confirm(`${nickname}님의 방송 권한을 회수할까요? 방송 중이라면 방송도 종료됩니다.`)) return;
     void guard(async () => {
@@ -142,6 +172,8 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
       live={state.broadcast.live ? state.broadcast : { live: true, broadcaster: user.nickname }} viewerCount={bc.viewerCount}
       hasAudio={bc.isSharingHere ? bc.localHasAudio : !!state.broadcast.hasAudio}
       onStop={() => void bc.stop()} onRetry={() => void bc.retryWatch()}
+      overlayOn={overlayOn} onToggleOverlay={() => setOverlayOn((o) => !o)} onPopOut={() => void popOutChat()}
+      overlay={<ChatOverlay messages={state.messages} broadcasterId={state.broadcast.broadcasterId} broadcasterName={state.broadcast.broadcaster ?? user.nickname} className="h-full" />}
     />
   ) : null;
   const shareAlert = bc.error && bc.view !== 'error' ? (
@@ -265,6 +297,12 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
       </div>
       {createOpen && <CreateChannelDialog config={config} onClose={() => setCreateOpen(false)} onCreated={onCreated} />}
       {kickTarget && <KickDialog nickname={kickTarget.nickname} onClose={() => setKickTarget(null)} onConfirm={onKickConfirm} />}
+      {pipWin && createPortal(
+        <div style={{ height: '100vh', padding: 12, boxSizing: 'border-box' }}>
+          <ChatOverlay messages={state.messages} broadcasterId={state.broadcast.broadcasterId} broadcasterName={state.broadcast.broadcaster ?? user.nickname} className="h-full" />
+        </div>,
+        pipWin.document.body,
+      )}
       {infoOpen && !isDesktop && <Modal title={channel?.name ?? '채널 정보'} onClose={() => setInfoOpen(false)}><div className="-m-5 flex max-h-[70dvh] flex-col">{panel}</div></Modal>}
     </div>
   );

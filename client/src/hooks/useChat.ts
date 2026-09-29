@@ -109,8 +109,8 @@ export function useChat(channelId: string | null, conn: ConnState, messageMax: n
     };
     const onNotice = (d: { channelId: string; notice: Notice | null }) => mine(d) && setState((s) => ({ ...s, notice: d.notice }));
     const onPresence = (d: { channelId: string; participants: Participant[] }) => mine(d) && setState((s) => ({ ...s, participants: d.participants }));
-    const onStarted = (d: { channelId: string; broadcaster: string; startedAt: number; hasAudio: boolean }) =>
-      mine(d) && setState((s) => ({ ...s, broadcast: { live: true, broadcaster: d.broadcaster, startedAt: d.startedAt, hasAudio: d.hasAudio } }));
+    const onStarted = (d: { channelId: string; broadcaster: string; broadcasterId?: string; startedAt: number; hasAudio: boolean }) =>
+      mine(d) && setState((s) => ({ ...s, broadcast: { live: true, broadcaster: d.broadcaster, broadcasterId: d.broadcasterId, startedAt: d.startedAt, hasAudio: d.hasAudio } }));
     const onEnded = (d: { channelId: string }) => mine(d) && setState((s) => ({ ...s, broadcast: { live: false } }));
     const onRole = (d: { channelId: string; role: 'owner' | 'admin' | 'broadcaster' | 'member'; canBroadcast: boolean }) =>
       mine(d) && setState((s) => (s.me ? { ...s, me: { ...s.me, role: d.role, canBroadcast: d.canBroadcast } } : s));
