@@ -86,6 +86,7 @@ export const schemas = {
     reason: z.string().max(100).optional(),
   }),
   unban: z.object({ channelId: id, userId: id }),
+  target: z.object({ channelId: id, userId: id }),
   start: z.object({ channelId: id, hasAudio: z.boolean() }),
   signal: z.object({
     channelId: id,

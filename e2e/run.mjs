@@ -426,7 +426,7 @@ await test('채널 생성/목록/검색 + 생성자 권한', async () => {
   return '기본 채널 4개 + 생성 채널, 검색 1건, 중복/불허 문자 거부';
 });
 
-await test('비관리자의 관리 기능 호출 차단 (소켓 8종 + REST 채널 삭제 + 닉네임 탈취)', async () => {
+await test('비관리자의 관리 기능 호출 차단 (소켓 11종 + REST 채널 삭제 + 닉네임 탈취)', async () => {
   const owner = await rawSocket(ownerCookie);
   const other = await rawSocket(otherCookie);
   await emit(owner, 'channel:join', { channelId: chId });
@@ -442,6 +442,9 @@ await test('비관리자의 관리 기능 호출 차단 (소켓 8종 + REST 채�
     'ban:list': { channelId: chId },
     'broadcast:start': { channelId: chId, hasAudio: false },
     'broadcast:stop': { channelId: chId },
+    'broadcaster:grant': { channelId: chId, userId: ownerUser.id },
+    'broadcaster:revoke': { channelId: chId, userId: ownerUser.id },
+    'broadcaster:list': { channelId: chId },
   };
   for (const [ev, data] of Object.entries(attempts)) {
     const r = await emit(other, ev, data);
@@ -507,7 +510,8 @@ await test('UI 관리 기능: 공지 고정·메시지 삭제·강퇴·재입장
   await O.page.locator('div.group', { hasText: '부적절한 메시지 예시' }).getByLabel('메시지 삭제').click();
   await V.page.getByText('관리자가 삭제한 메시지입니다.').first().waitFor({ timeout: 6000 });
   assert(!(await log(V.page).innerText()).includes('부적절한 메시지 예시'), '삭제된 내용이 남아 있음');
-  await O.page.getByLabel('문제유저 강퇴').first().click();
+  await O.page.getByRole('button', { name: '문제유저 관리 메뉴' }).first().click();
+  await O.page.getByRole('menuitem', { name: '강퇴' }).click();
   await O.page.getByRole('button', { name: '강퇴하기' }).click();
   await V.page.getByText(/강퇴되었습니다/).first().waitFor({ timeout: 8000 });
   await V.page.screenshot({ path: path.join(out, 'desktop-kicked.png') });
@@ -674,11 +678,78 @@ await test('방송 종료: 시청 화면 정리, 브라우저 "공유 중지" �
   await viewer.page.waitForFunction(() => document.querySelector('video')?.videoWidth > 0, null, { timeout: 25000 });
   await streamer.page.evaluate(() => { const t = document.querySelector('video').srcObject.getVideoTracks()[0]; t.stop(); t.onended?.(new Event('ended')); });
   await viewer.page.locator('video').waitFor({ state: 'detached', timeout: 8000 });
-  await streamer.page.getByText('화면 공유가 종료되어 방송을 마쳤습니다').waitFor({ timeout: 5000 });
+  await streamer.page.getByText('화면 공유가 중지되어 방송을 마쳤습니다').waitFor({ timeout: 5000 });
   return '종료 버튼 / 공유 중지 모두 시청자·방송자 화면 정리';
 });
 
+await test('방송 중 다른 채널로 이동해도 방송 유지 → 방송 종료 버튼으로만 종료', async () => {
+  const S = streamer, V = viewer;
+  await S.page.getByRole('button', { name: '방송 시작', exact: true }).first().click();
+  await V.page.waitForFunction(() => document.querySelector('video')?.videoWidth > 0, null, { timeout: 25000 });
+  // 방송자가 다른 채널(자유 대화)로 이동
+  await S.page.getByRole('button', { name: /자유 대화/ }).click();
+  await ready(S.page);
+  const banner = S.page.getByRole('status').filter({ hasText: '에서 방송 중입니다' });
+  await banner.waitFor({ timeout: 5000 });
+  await S.page.screenshot({ path: path.join(out, 'desktop-streaming-elsewhere.png') });
+  await sleep(1500);
+  const t1 = await V.page.evaluate(() => document.querySelector('video')?.currentTime ?? -1);
+  await sleep(2000);
+  const t2 = await V.page.evaluate(() => document.querySelector('video')?.currentTime ?? -1);
+  assert(t1 >= 0 && t2 > t1, `방송자가 채널을 옮긴 뒤 시청자 영상이 멈춤 (${t1} → ${t2})`);
+  const live = (await api(otherCookie, 'GET', '/api/channels')).body.channels.filter((c) => c.live).map((c) => c.name);
+  assert(live.includes('방송 검증 채널'), `서버에서 방송이 종료됨 (live: ${live})`);
+  // 채널 나가기(빈 화면)로 가도 유지
+  await S.page.getByRole('button', { name: '채널 나가기' }).click();
+  await S.page.getByText('채널에서 나갔어요').waitFor();
+  await banner.waitFor({ timeout: 3000 });
+  assert((await V.page.locator('video').count()) === 1, '채널 나가기 후 방송이 종료됨');
+  // 방송 채널로 돌아오면 송출 화면(미리보기)이 다시 보인다
+  await banner.getByRole('button', { name: '방송 채널로 이동' }).click();
+  await S.page.locator('video').first().waitFor({ timeout: 8000 });
+  await S.page.getByRole('button', { name: '방송 종료' }).first().waitFor();
+  // 다시 이동한 뒤 배너의 종료 버튼으로 종료
+  await S.page.getByRole('button', { name: /자유 대화/ }).click();
+  await banner.waitFor();
+  await banner.getByRole('button', { name: '방송 종료' }).click();
+  await V.page.locator('video').waitFor({ state: 'detached', timeout: 8000 });
+  await banner.waitFor({ state: 'detached', timeout: 5000 });
+  return `채널 이동/나가기 후에도 영상 재생 유지(${t1.toFixed(1)}→${t2.toFixed(1)}s), 배너의 방송 종료 버튼으로만 종료`;
+});
+
+await test('방송 권한 부여·회수 (⋮ 메뉴): 부여 → 방송 가능 → 회수 시 방송 종료', async () => {
+  const O = await newUser('권한관리자', { channel: 'all' });
+  await createChannelUI(O.page, '권한 채널');
+  const T = await newUser('권한대상', { channel: 'all' });
+  await T.page.getByRole('button', { name: /권한 채널/ }).click();
+  await ready(T.page);
+  assert((await T.page.getByRole('button', { name: '방송 시작', exact: true }).count()) === 0, '권한 없는 사용자에게 방송 버튼이 보임');
+  // 금지 아이콘 대신 ⋮ 메뉴, 메뉴 항목 확인
+  await O.page.getByRole('button', { name: '권한대상 관리 메뉴' }).first().click();
+  const items = await O.page.getByRole('menuitem').allInnerTexts();
+  assert(items.some((t) => t.includes('방송 권한 부여')) && items.some((t) => t.includes('강퇴')), `메뉴 항목 이상: ${items}`);
+  await O.page.screenshot({ path: path.join(out, 'desktop-more-menu.png') });
+  await O.page.getByRole('menuitem', { name: /방송 권한 부여/ }).click();
+  await T.page.getByRole('button', { name: '방송 시작', exact: true }).waitFor({ timeout: 6000 });
+  await O.page.getByText('방송 권한 보유자 · 1').waitFor({ timeout: 6000 });
+  // 권한을 받은 사용자는 방송할 수 있지만 관리 기능은 여전히 없다
+  assert((await T.page.getByRole('button', { name: '공지 등록' }).count()) === 0, '방송 권한만으로 관리 기능이 열림');
+  await T.page.getByRole('button', { name: '방송 시작', exact: true }).first().click();
+  await O.page.locator('video').first().waitFor({ timeout: 10000 });
+  await O.page.waitForFunction(() => document.querySelector('video')?.videoWidth > 0, null, { timeout: 25000 });
+  // 회수: 방송 중이면 방송도 종료
+  await O.page.getByRole('button', { name: '권한대상 관리 메뉴' }).first().click();
+  await O.page.getByRole('menuitem', { name: /방송 권한 회수/ }).click();
+  await T.page.getByText('방송 권한이 회수되어 방송이 종료되었습니다.').first().waitFor({ timeout: 8000 });
+  await O.page.locator('video').waitFor({ state: 'detached', timeout: 8000 });
+  await T.page.getByRole('button', { name: '방송 시작', exact: true }).waitFor({ state: 'detached', timeout: 6000 });
+  await T.page.screenshot({ path: path.join(out, 'desktop-revoked.png') });
+  return '부여 → 방송 시작·시청 → 회수 시 방송 종료 및 방송 버튼 제거';
+});
+
 await test('방송자 이탈(탭 닫기) 시 방송 자동 종료·서버 상태 정리', async () => {
+  await streamer.page.getByRole('button', { name: /방송 검증 채널/ }).click(); // 이전 테스트에서 다른 채널로 이동해 있음
+  await ready(streamer.page);
   await streamer.page.getByRole('button', { name: '방송 시작', exact: true }).first().click();
   await viewer.page.getByText('LIVE').first().waitFor({ timeout: 10000 });
   await viewer.page.waitForFunction(() => document.querySelector('video')?.videoWidth > 0, null, { timeout: 25000 });

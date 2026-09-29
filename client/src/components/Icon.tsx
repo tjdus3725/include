@@ -30,12 +30,13 @@ const paths = {
   ban: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM4.9 4.9l14.2 14.2',
   radio: 'M4.9 19.1a10 10 0 0 1 0-14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M19.1 4.9a10 10 0 0 1 0 14.2M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
   check: 'M20 6 9 17l-5-5',
+  moreVert: 'M12 5h.01M12 12h.01M12 19h.01',
 } as const;
 export type IconName = keyof typeof paths;
 
 export function Icon({ name, size = 18, ...rest }: { name: IconName; size?: number } & Omit<SVGProps<SVGSVGElement>, 'name'>) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...rest}>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={name === 'moreVert' ? 3.5 : 2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...rest}>
       <path d={paths[name]} />
     </svg>
   );

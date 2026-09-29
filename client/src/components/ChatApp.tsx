@@ -67,11 +67,14 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   const chat = useChat(activeId, conn, config.limits.messageMax, user.isAdmin);
   const { state } = chat;
   const canModerate = !!state.me?.canModerate;
+  const canBroadcast = !!state.me?.canBroadcast;
   const bc = useBroadcast({
     channelId: activeId, joined: state.status === 'joined', epoch: state.epoch,
-    live: state.broadcast, canModerate, iceServers: config.iceServers,
+    live: state.broadcast, canBroadcast, iceServers: config.iceServers,
   });
-  const live = state.broadcast.live || bc.isSharing;
+  const live = state.broadcast.live || bc.isSharingHere;
+  const sharingElsewhere = bc.isSharing && !bc.isSharingHere;
+  const shareChannel = channels.find((c) => c.id === bc.shareChannelId) ?? null;
   const activeMeta = useMemo(() => channels.find((c) => c.id === activeId) ?? null, [channels, activeId]);
   const channel = state.channel ?? activeMeta;
 
@@ -91,6 +94,13 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
     setBansVersion((v) => v + 1);
     toast(`${kickTarget.nickname}님을 강퇴했습니다.`, 'success');
   };
+  const onSetBroadcaster = (userId: string, nickname: string, grant: boolean) => {
+    if (!grant && !window.confirm(`${nickname}님의 방송 권한을 회수할까요? 방송 중이라면 방송도 종료됩니다.`)) return;
+    void guard(async () => {
+      await (grant ? chat.actions.grantBroadcaster(userId) : chat.actions.revokeBroadcaster(userId));
+      setBansVersion((v) => v + 1);
+    }, grant ? `${nickname}님에게 방송 권한을 부여했습니다.` : `${nickname}님의 방송 권한을 회수했습니다.`);
+  };
   const onDeleteChannel = async () => {
     if (!channel || !window.confirm(`"${channel.name}" 채널을 삭제할까요? 저장된 메시지도 모두 삭제되며 되돌릴 수 없습니다.`)) return;
     try {
@@ -105,13 +115,15 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   // ---- 조각 ----
   const panel = (
     <ChannelPanel
-      state={state} user={user} config={config} canModerate={canModerate}
-      isSharing={bc.isSharing} starting={bc.share === 'starting'} shareBlocked={bc.shareBlocked}
+      state={state} user={user} config={config} canModerate={canModerate} canBroadcast={canBroadcast}
+      isSharing={bc.isSharingHere} starting={bc.startingHere} sharingElsewhere={sharingElsewhere} shareBlocked={bc.shareBlocked}
       onStart={() => void bc.start()} onStop={() => void bc.stop()}
       onSetNotice={async (b) => { await chat.actions.setNotice(b); toast('공지를 등록했습니다.', 'success'); }}
       onClearNotice={async () => { await chat.actions.clearNotice(); toast('공지를 해제했습니다.', 'success'); }}
       onKick={(userId, nickname) => setKickTarget({ userId, nickname })}
       onListBans={async () => (await chat.actions.listBans()).bans}
+      onSetBroadcaster={onSetBroadcaster}
+      onListBroadcasters={async () => (await chat.actions.listBroadcasters()).broadcasters}
       onUnban={async (uid): Promise<Ban[]> => { const r = await chat.actions.unban(uid); toast('이용 제한을 해제했습니다.', 'success'); return r.bans; }}
       onDeleteChannel={() => void onDeleteChannel()} bansVersion={bansVersion}
     />
@@ -121,14 +133,14 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
       state={state} pending={chat.pending} userId={user.id} conn={conn} messageMax={config.limits.messageMax}
       loadingOlder={chat.loadingOlder} canModerate={canModerate}
       onSend={chat.send} onRetry={chat.retry} onDiscard={chat.discard} onLoadOlder={() => void chat.loadOlder()}
-      onDelete={onDelete} onKick={(userId, nickname) => setKickTarget({ userId, nickname })}
+      onDelete={onDelete} onKick={(userId, nickname) => setKickTarget({ userId, nickname })} onSetBroadcaster={onSetBroadcaster}
     />
   );
   const stage = live ? (
     <Stage
-      stream={bc.stream} isSharing={bc.isSharing} starting={bc.share === 'starting'} view={bc.view} error={bc.error}
+      stream={bc.stream} isSharing={bc.isSharingHere} starting={bc.startingHere} view={bc.view} error={bc.error}
       live={state.broadcast.live ? state.broadcast : { live: true, broadcaster: user.nickname }} viewerCount={bc.viewerCount}
-      hasAudio={bc.isSharing ? bc.localHasAudio : !!state.broadcast.hasAudio}
+      hasAudio={bc.isSharingHere ? bc.localHasAudio : !!state.broadcast.hasAudio}
       onStop={() => void bc.stop()} onRetry={() => void bc.retryWatch()}
     />
   ) : null;
@@ -152,10 +164,11 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
           <span className="ml-2 text-mist-500">· {state.participants.length}명 접속</span>
         </p>
       </div>
-      {canModerate && (
-        bc.isSharing
+      {canBroadcast && (
+        bc.isSharingHere
           ? <button className="btn-danger !px-3" onClick={() => void bc.stop()}><Icon name="stop" size={14} /><span className="hidden sm:inline">방송 종료</span></button>
-          : <button className="btn-primary !px-3" onClick={() => void bc.start()} disabled={bc.share === 'starting' || state.broadcast.live || state.status !== 'joined'} title={state.broadcast.live ? '이미 방송 중입니다' : '화면 공유 방송 시작'}>
+          : <button className="btn-primary !px-3" onClick={() => void bc.start()} disabled={bc.share === 'starting' || state.broadcast.live || sharingElsewhere || state.status !== 'joined'}
+              title={sharingElsewhere ? '다른 채널에서 방송 중입니다' : state.broadcast.live ? '이미 방송 중입니다' : '화면 공유 방송 시작'}>
               <Icon name="monitor" size={16} /><span className="hidden sm:inline">방송 시작</span>
             </button>
       )}
@@ -221,6 +234,21 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
     <div className="flex h-dvh flex-col">
       <Header user={user} config={config} conn={conn} query={query} onQuery={setQuery} onToggleMenu={() => setMenuOpen((o) => !o)} menuOpen={menuOpen} onUser={onUser} onLogout={onLogout} />
       <ConnectionBanner conn={conn} />
+      {sharingElsewhere && (
+        <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-coral-500/40 bg-coral-500/10 px-4 py-2 text-sm">
+          <span className="animate-pulse-dot rounded bg-coral-500 px-1.5 py-px text-[10px] font-extrabold text-white">LIVE</span>
+          <span className="min-w-0 flex-1 text-mist-100">
+            <b>{shareChannel?.name ?? '다른 채널'}</b>에서 방송 중입니다 · 시청자 {bc.viewerCount}명 <span className="text-mist-400">(다른 채널에 있어도 방송은 계속됩니다)</span>
+          </span>
+          <button className="btn-secondary !py-1 text-xs" onClick={() => bc.shareChannelId && select(bc.shareChannelId)}>방송 채널로 이동</button>
+          <button className="btn-danger !py-1 text-xs" onClick={() => void bc.stop()}><Icon name="stop" size={12} /> 방송 종료</button>
+        </div>
+      )}
+      {bc.error && !activeId && (
+        <div role="alert" className="flex items-center gap-2 border-b border-coral-500/40 bg-coral-500/10 px-4 py-2 text-sm text-coral-400">
+          <span className="flex-1">{bc.error}</span><button className="underline" onClick={bc.dismissError}>닫기</button>
+        </div>
+      )}
       <div className="relative flex min-h-0 flex-1">
         <aside className="hidden w-72 shrink-0 flex-col border-r border-ink-600 bg-ink-900 lg:flex">
           <ChannelList channels={channels} loading={loading} error={chError} activeId={activeId} query={query} onQuery={setQuery} onSelect={select} onCreate={() => setCreateOpen(true)} onRetry={() => void refresh()} showSearch={false} />

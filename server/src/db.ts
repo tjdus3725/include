@@ -96,6 +96,22 @@ const MIGRATIONS: { name: string; sql: string }[] = [
     CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `,
   },
+  {
+    name: '채널별 방송 권한(broadcaster) 역할 추가',
+    // SQLite 는 CHECK 제약을 변경할 수 없어 테이블을 새로 만들어 데이터를 옮긴다
+    sql: `
+    CREATE TABLE channel_roles_new (
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role       TEXT NOT NULL CHECK (role IN ('owner','broadcaster')),
+      granted_at INTEGER NOT NULL,
+      PRIMARY KEY (channel_id, user_id)
+    );
+    INSERT INTO channel_roles_new (channel_id, user_id, role, granted_at) SELECT channel_id, user_id, role, granted_at FROM channel_roles;
+    DROP TABLE channel_roles;
+    ALTER TABLE channel_roles_new RENAME TO channel_roles;
+    `,
+  },
 ];
 
 const DEFAULT_CHANNELS = [

@@ -208,9 +208,29 @@ export function getOwnerId(channelId: string): string | null {
 export function canModerate(user: UserRow, channelId: string): boolean {
   return user.is_admin === 1 || isOwner(channelId, user.id);
 }
-export function roleOf(user: UserRow, channelId: string): 'owner' | 'admin' | 'member' {
+export function isBroadcaster(channelId: string, userId: string): boolean {
+  return !!db.prepare(`SELECT 1 FROM channel_roles WHERE channel_id = ? AND user_id = ? AND role = 'broadcaster'`).get(channelId, userId);
+}
+/** 방송 시작 권한: 채널 관리자(소유자/서버 관리자) 또는 관리자가 부여한 방송 권한 보유자 */
+export function canBroadcast(user: UserRow, channelId: string): boolean {
+  return canModerate(user, channelId) || isBroadcaster(channelId, user.id);
+}
+export function grantBroadcaster(channelId: string, userId: string) {
+  // 이미 소유자 행이 있으면 그대로 둔다 (PK 충돌 시 무시)
+  db.prepare(`INSERT INTO channel_roles (channel_id, user_id, role, granted_at) VALUES (?, ?, 'broadcaster', ?) ON CONFLICT(channel_id, user_id) DO NOTHING`).run(channelId, userId, Date.now());
+}
+export function revokeBroadcaster(channelId: string, userId: string): boolean {
+  return db.prepare(`DELETE FROM channel_roles WHERE channel_id = ? AND user_id = ? AND role = 'broadcaster'`).run(channelId, userId).changes > 0;
+}
+export function listBroadcasters(channelId: string) {
+  return db
+    .prepare(`SELECT u.id AS userId, u.nickname FROM channel_roles r JOIN users u ON u.id = r.user_id WHERE r.channel_id = ? AND r.role = 'broadcaster' ORDER BY r.granted_at`)
+    .all(channelId) as { userId: string; nickname: string }[];
+}
+export function roleOf(user: UserRow, channelId: string): 'owner' | 'admin' | 'broadcaster' | 'member' {
   if (isOwner(channelId, user.id)) return 'owner';
-  return user.is_admin === 1 ? 'admin' : 'member';
+  if (user.is_admin === 1) return 'admin';
+  return isBroadcaster(channelId, user.id) ? 'broadcaster' : 'member';
 }
 
 // ---------- 메시지 ----------

@@ -25,8 +25,9 @@ export interface Message {
 }
 export interface PendingMessage { clientId: string; body: string; createdAt: number; status: 'sending' | 'failed'; error?: string }
 
-export interface Participant { id: string; nickname: string; color: string; role: 'owner' | 'admin' | 'member'; broadcasting: boolean }
+export interface Participant { id: string; nickname: string; color: string; role: 'owner' | 'admin' | 'broadcaster' | 'member'; broadcasting: boolean }
 export interface Notice { body: string; updatedAt: number; authorNickname: string | null }
+export interface Broadcaster { userId: string; nickname: string }
 export interface Ban { userId: string; nickname: string; reason: string; createdAt: number; expiresAt: number | null }
 
 export interface ErrorPayload { code: string; message: string; retryAfterMs?: number }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { emitAck, socket, SocketError } from '../lib/socket';
-import type { Ban, Channel, ConnState, LiveInfo, Message, Notice, Participant, PendingMessage } from '../lib/types';
+import type { Ban, Broadcaster, Channel, ConnState, LiveInfo, Message, Notice, Participant, PendingMessage } from '../lib/types';
 import { uid } from '../lib/util';
 
 export type JoinStatus = 'idle' | 'joining' | 'joined' | 'error' | 'kicked' | 'gone';
@@ -9,7 +9,7 @@ export interface ChatState {
   status: JoinStatus;
   error: string | null;
   channel: Channel | null;
-  me: { role: 'owner' | 'admin' | 'member'; canModerate: boolean } | null;
+  me: { role: 'owner' | 'admin' | 'broadcaster' | 'member'; canModerate: boolean; canBroadcast: boolean } | null;
   messages: Message[];
   hasMore: boolean;
   notice: Notice | null;
@@ -112,6 +112,8 @@ export function useChat(channelId: string | null, conn: ConnState, messageMax: n
     const onStarted = (d: { channelId: string; broadcaster: string; startedAt: number; hasAudio: boolean }) =>
       mine(d) && setState((s) => ({ ...s, broadcast: { live: true, broadcaster: d.broadcaster, startedAt: d.startedAt, hasAudio: d.hasAudio } }));
     const onEnded = (d: { channelId: string }) => mine(d) && setState((s) => ({ ...s, broadcast: { live: false } }));
+    const onRole = (d: { channelId: string; role: 'owner' | 'admin' | 'broadcaster' | 'member'; canBroadcast: boolean }) =>
+      mine(d) && setState((s) => (s.me ? { ...s, me: { ...s.me, role: d.role, canBroadcast: d.canBroadcast } } : s));
     const onKicked = (d: { channelId: string; reason: string; expiresAt: number | null }) => {
       if (!mine(d)) return;
       const until = d.expiresAt ? `${new Date(d.expiresAt).toLocaleString('ko-KR')}까지` : '기한 없이';
@@ -128,6 +130,7 @@ export function useChat(channelId: string | null, conn: ConnState, messageMax: n
     socket.on('presence:update', onPresence);
     socket.on('broadcast:started', onStarted);
     socket.on('broadcast:ended', onEnded);
+    socket.on('role:update', onRole);
     socket.on('channel:kicked', onKicked);
     socket.on('channel:deleted', onGone);
     socket.on('channels:stats', onStats);
@@ -138,6 +141,7 @@ export function useChat(channelId: string | null, conn: ConnState, messageMax: n
       socket.off('presence:update', onPresence);
       socket.off('broadcast:started', onStarted);
       socket.off('broadcast:ended', onEnded);
+      socket.off('role:update', onRole);
       socket.off('channel:kicked', onKicked);
       socket.off('channel:deleted', onGone);
       socket.off('channels:stats', onStats);
@@ -207,6 +211,9 @@ export function useChat(channelId: string | null, conn: ConnState, messageMax: n
       emitAck<{ bans: Ban[] }>('user:kick', { channelId, userId, minutes, reason: reason || undefined }),
     unban: (userId: string) => emitAck<{ bans: Ban[] }>('user:unban', { channelId, userId }),
     listBans: () => emitAck<{ bans: Ban[] }>('ban:list', { channelId }),
+    grantBroadcaster: (userId: string) => emitAck<{ broadcasters: Broadcaster[] }>('broadcaster:grant', { channelId, userId }),
+    revokeBroadcaster: (userId: string) => emitAck<{ broadcasters: Broadcaster[] }>('broadcaster:revoke', { channelId, userId }),
+    listBroadcasters: () => emitAck<{ broadcasters: Broadcaster[] }>('broadcaster:list', { channelId }),
   };
 
   return { state, pending, send, retry, discard, loadOlder, loadingOlder, actions };

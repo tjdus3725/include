@@ -36,7 +36,8 @@ Channel  { id, name, description, isDefault, ownerId|null, ownerNickname|null, c
            live, broadcaster?, startedAt?, hasAudio?, viewerCount? }
 Message  { id:number, channelId, kind:'user'|'system', userId|null, nickname|null, color|null,
            body, createdAt, deleted:boolean, clientId|null }   // deleted 이면 body 는 빈 문자열
-Participant { id, nickname, color, role:'owner'|'admin'|'member', broadcasting }
+Participant { id, nickname, color, role:'owner'|'admin'|'broadcaster'|'member', broadcasting }
+Broadcaster { userId, nickname }
 Notice   { body, updatedAt, authorNickname|null }
 Ban      { userId, nickname, reason, createdAt, expiresAt|null }
 ```
@@ -52,7 +53,7 @@ Ban      { userId, nickname, reason, createdAt, expiresAt|null }
 
 | 이벤트 | 페이로드 | 성공 응답 | 권한 |
 | --- | --- | --- | --- |
-| `channel:join` | `{ channelId, lastId? }` | `{ channel, me:{role,canModerate}, messages, hasMore, reset, notice, participants, broadcast }` | 로그인, 이용 제한 없음 |
+| `channel:join` | `{ channelId, lastId? }` | `{ channel, me:{role,canModerate,canBroadcast}, messages, hasMore, reset, notice, participants, broadcast }` | 로그인, 이용 제한 없음 |
 | `channel:leave` | `{ channelId }` | `{}` | - |
 | `message:send` | `{ channelId, clientId, body }` | `{ message, duplicate? }` | 채널 참가자 |
 | `message:delete` | `{ channelId, messageId }` | `{}` | 채널 관리자 |
@@ -61,13 +62,16 @@ Ban      { userId, nickname, reason, createdAt, expiresAt|null }
 | `user:kick` | `{ channelId, userId, minutes?: number\|null, reason? }` (`minutes` 없음/null = 영구) | `{ bans }` | 채널 관리자 |
 | `user:unban` | `{ channelId, userId }` | `{ bans }` | 채널 관리자 |
 | `ban:list` | `{ channelId }` | `{ bans }` | 채널 관리자 |
-| `broadcast:start` | `{ channelId, hasAudio }` | `{}` | 채널 관리자 |
-| `broadcast:stop` | `{ channelId }` | `{}` | 채널 관리자 |
+| `broadcast:start` | `{ channelId, hasAudio }` | `{}` | 채널 관리자 또는 **방송 권한 보유자** |
+| `broadcast:stop` | `{ channelId }` | `{}` | 방송 중인 본인 또는 채널 관리자 (방송자가 다른 채널에 있어도 가능) |
+| `broadcaster:grant` | `{ channelId, userId }` | `{ broadcasters }` | 채널 관리자 |
+| `broadcaster:revoke` | `{ channelId, userId }` | `{ broadcasters }` | 채널 관리자 (대상이 방송 중이면 방송도 종료) |
+| `broadcaster:list` | `{ channelId }` | `{ broadcasters }` | 채널 관리자 |
 | `broadcast:watch` | `{ channelId }` | `{ broadcasterId, hasAudio }` | 채널 참가자 |
 | `broadcast:unwatch` | `{ channelId }` | `{}` | - |
 | `webrtc:signal` | `{ channelId, to, data }` | `{}` | 방송자↔시청자 사이만 |
 
-- **채널 관리자** = 채널 소유자 또는 서버 관리자(`ADMIN_CODE` 인증). 서버가 매 요청마다 DB 로 검증하며 클라이언트가 보낸 권한 정보는 신뢰하지 않습니다. 실패 시 `FORBIDDEN`.
+- **채널 관리자** = 채널 소유자 또는 서버 관리자(`ADMIN_CODE` 인증). **방송 권한 보유자**는 채널 관리자가 채널별로 부여하며 방송만 할 수 있고 다른 관리 기능은 없습니다. 서버가 매 요청마다 DB 로 검증하며 클라이언트가 보낸 권한 정보는 신뢰하지 않습니다. 실패 시 `FORBIDDEN`.
 - `message:send`: 서버가 검증(`EMPTY_MESSAGE`, `MESSAGE_TOO_LONG`, `RATE_LIMITED`(retryAfterMs), `DUPLICATE_MESSAGE`, `BANNED`)하고 고유 `id`·`createdAt` 을 부여합니다. **같은 `clientId` 로 다시 보내면 새로 저장하지 않고 기존 메시지를 `duplicate: true` 로 돌려줍니다** (재전송 안전).
 - `channel:join` 재입장: `lastId`(마지막으로 받은 메시지 ID)를 보내면 그 이후 메시지를 최대 200개 돌려주고 `reset:false`. 한도를 넘으면 최신 50개와 `reset:true`(클라이언트가 목록을 교체).
 - `user:kick`: 대상은 채널 관리자가 아니어야 하며 자기 자신은 불가(`INVALID_TARGET`). 대상 소켓은 채널에서 제거되고 `channel:kicked` 를 받습니다. 같은 `user_id`(옵션 `BAN_BY_IP=true` 면 IP 해시도)로 재입장하면 `BANNED`.
@@ -81,12 +85,13 @@ Ban      { userId, nickname, reason, createdAt, expiresAt|null }
 | `message:deleted` | 채널 룸 | `{ channelId, messageId }` |
 | `notice:update` | 채널 룸 | `{ channelId, notice: Notice\|null }` |
 | `presence:update` | 채널 룸 | `{ channelId, participants: Participant[] }` |
+| `role:update` | 대상 사용자의 소켓(채널 룸) | `{ channelId, role, canBroadcast }` |
 | `channel:kicked` | 대상 사용자의 소켓 | `{ channelId, reason, expiresAt\|null }` |
 | `channel:deleted` | 채널 룸 | `{ channelId }` |
 | `channels:stats` | lobby | `{ stats: [{ id, onlineCount, live, broadcaster?, startedAt?, hasAudio?, viewerCount? }] }` |
 | `channels:changed` | lobby | `{}` (채널 생성/삭제 → 목록 재조회) |
 | `broadcast:started` | 채널 룸 | `{ channelId, broadcaster, startedAt, hasAudio }` |
-| `broadcast:ended` | 채널 룸 | `{ channelId, reason: 'stopped'\|'disconnected'\|'channel-deleted' }` |
+| `broadcast:ended` | 채널 룸 + 방송자 소켓 | `{ channelId, reason: 'stopped'\|'disconnected'\|'channel-deleted'\|'revoked'\|'kicked' }` |
 | `broadcast:viewer-joined` | 방송자 소켓 | `{ viewerId, nickname }` → 방송자가 `viewerId` 로 offer 전송 |
 | `broadcast:viewer-left` | 방송자 소켓 | `{ viewerId }` |
 | `webrtc:signal` | 상대 소켓 | `{ channelId, from, data }` |
@@ -104,4 +109,7 @@ Ban      { userId, nickname, reason, createdAt, expiresAt|null }
  │◀──────────── webrtc:signal(candidate) 양방향 ────────────────▶│
  └───────────── WebRTC 영상 (브라우저 ↔ 브라우저 직접) ────────────┘
 ```
-방송자 소켓이 채널을 떠나거나 끊기면 서버가 `broadcast:ended` 를 보내고 방송 상태를 정리합니다.
+**방송은 방송자가 보고 있는 채널과 분리되어 있습니다.** 방송자가 다른 채널로 이동하거나 채널을 나가도 방송은 유지되고(시그널링도 계속 가능),
+`broadcast:stop`(방송 종료 버튼)으로 끝나는 것이 기본입니다. 그 외에 서버가 방송을 끝내는 경우는 다음뿐입니다:
+방송자 소켓 연결 끊김(탭 종료·네트워크 단절 — 화면 캡처도 함께 사라짐), 채널 관리자의 방송 권한 회수·강퇴·종료, 채널 삭제.
+한 소켓(탭)은 동시에 하나의 방송만 할 수 있습니다(`ALREADY_LIVE`).

@@ -77,11 +77,11 @@ function participantsOf(channelId: string) {
       id: u.id,
       nickname: u.nickname,
       color: u.color,
-      role: u.id === ownerId ? 'owner' : u.is_admin ? 'admin' : 'member',
+      role: u.id === ownerId ? 'owner' : u.is_admin ? 'admin' : repo.isBroadcaster(channelId, u.id) ? 'broadcaster' : 'member',
       broadcasting: b?.userId === u.id,
     });
   }
-  const rank = { owner: 0, admin: 1, member: 2 } as const;
+  const rank = { owner: 0, admin: 1, broadcaster: 2, member: 3 } as const;
   return out.sort((a, b2) => rank[a.role as keyof typeof rank] - rank[b2.role as keyof typeof rank] || a.nickname.localeCompare(b2.nickname, 'ko'));
 }
 
@@ -160,13 +160,11 @@ function leaveChannel(socket: S, immediate: boolean) {
   if (!channelId) return;
   socket.data.channelId = null;
   socket.leave(room(channelId));
+  // 방송자가 채널을 떠나도 방송은 유지된다(종료는 방송 종료 요청·연결 끊김·권한 회수·강퇴·채널 삭제뿐). 시청자만 정리한다.
   const b = broadcasts.get(channelId);
-  if (b) {
-    if (b.socketId === socket.id) endBroadcast(channelId, 'disconnected');
-    else if (b.viewers.delete(socket.id)) {
-      io.to(b.socketId).emit('broadcast:viewer-left', { viewerId: socket.id });
-      scheduleFlush(channelId);
-    }
+  if (b && b.viewers.delete(socket.id)) {
+    io.to(b.socketId).emit('broadcast:viewer-left', { viewerId: socket.id });
+    scheduleFlush(channelId);
   }
   const m = presence.get(channelId);
   const set = m?.get(socket.data.userId);
@@ -191,12 +189,21 @@ function leaveChannel(socket: S, immediate: boolean) {
   }
 }
 
-export function endBroadcast(channelId: string, reason: 'stopped' | 'disconnected' | 'channel-deleted') {
+type EndReason = 'stopped' | 'disconnected' | 'channel-deleted' | 'revoked' | 'kicked';
+const END_TEXT: Record<Exclude<EndReason, 'channel-deleted'>, (n: string) => string> = {
+  stopped: (n) => `${n}님이 방송을 종료했습니다.`,
+  disconnected: (n) => `${n}님의 방송 연결이 끊겨 방송이 종료되었습니다.`,
+  revoked: (n) => `${n}님의 방송 권한이 회수되어 방송이 종료되었습니다.`,
+  kicked: (n) => `${n}님이 강퇴되어 방송이 종료되었습니다.`,
+};
+
+export function endBroadcast(channelId: string, reason: EndReason) {
   const b = broadcasts.get(channelId);
   if (!b) return;
   broadcasts.delete(channelId);
-  io.to(room(channelId)).emit('broadcast:ended', { channelId, reason });
-  postSystem(channelId, reason === 'stopped' ? `${b.nickname}님이 방송을 종료했습니다.` : `${b.nickname}님의 방송 연결이 끊겨 방송이 종료되었습니다.`);
+  // 방송자는 다른 채널에 있을 수 있으므로 채널 룸과 방송자 소켓 양쪽에 알린다 (중복 수신 없음)
+  io.to(room(channelId)).to(b.socketId).emit('broadcast:ended', { channelId, reason });
+  if (reason !== 'channel-deleted') postSystem(channelId, END_TEXT[reason](b.nickname));
   scheduleFlush(channelId);
 }
 
@@ -205,7 +212,7 @@ export function destroyChannelRuntime(channelId: string) {
   const b = broadcasts.get(channelId);
   if (b) {
     broadcasts.delete(channelId);
-    io.to(room(channelId)).emit('broadcast:ended', { channelId, reason: 'channel-deleted' });
+    io.to(room(channelId)).to(b.socketId).emit('broadcast:ended', { channelId, reason: 'channel-deleted' });
   }
   io.to(room(channelId)).emit('channel:deleted', { channelId });
   for (const s of socketsInRoom(channelId)) {
@@ -294,7 +301,7 @@ export function initRealtime(server: Server) {
       }
       return {
         channel: channelDTO(ch),
-        me: { role: repo.roleOf(user, ch.id), canModerate: mod },
+        me: { role: repo.roleOf(user, ch.id), canModerate: mod, canBroadcast: repo.canBroadcast(user, ch.id) },
         messages,
         hasMore,
         reset,
@@ -377,9 +384,46 @@ export function initRealtime(server: Server) {
         s.emit('channel:kicked', { channelId: d.channelId, reason, expiresAt });
         leaveChannel(s, true);
       }
+      if (broadcasts.get(d.channelId)?.userId === target.id) endBroadcast(d.channelId, 'kicked');
+      repo.revokeBroadcaster(d.channelId, target.id);
       const span = d.minutes ? `${fmtDuration(d.minutes)} 동안 ` : '';
       postSystem(d.channelId, `${target.nickname}님이 ${span}이용 제한과 함께 강퇴되었습니다.`);
       return { bans: repo.listBans(d.channelId) };
+    });
+    // ---- 방송 권한 (채널 관리자만) ----
+    const notifyRole = (channelId: string, userId: string) => {
+      const target = repo.getUser(userId);
+      if (!target) return;
+      for (const s of socketsInRoom(channelId)) {
+        if (s.data.userId === userId) s.emit('role:update', { channelId, role: repo.roleOf(target, channelId), canBroadcast: repo.canBroadcast(target, channelId) });
+      }
+      scheduleFlush(channelId);
+    };
+    handle(socket, 'broadcaster:grant', schemas.target, (d, user) => {
+      requireModerator(user, d.channelId);
+      const target = repo.getUser(d.userId);
+      if (!target) throw new AppError('USER_NOT_FOUND', '대상 사용자를 찾을 수 없습니다.', 404);
+      if (repo.canModerate(target, d.channelId)) throw new AppError('INVALID_TARGET', '채널 관리자는 이미 방송할 수 있습니다.', 400);
+      if (repo.isBroadcaster(d.channelId, target.id)) throw new AppError('ALREADY_GRANTED', '이미 방송 권한이 있습니다.', 409);
+      repo.grantBroadcaster(d.channelId, target.id);
+      postSystem(d.channelId, `${target.nickname}님에게 방송 권한이 부여되었습니다.`);
+      notifyRole(d.channelId, target.id);
+      return { broadcasters: repo.listBroadcasters(d.channelId) };
+    });
+    handle(socket, 'broadcaster:revoke', schemas.target, (d, user) => {
+      requireModerator(user, d.channelId);
+      const target = repo.getUser(d.userId);
+      if (!target) throw new AppError('USER_NOT_FOUND', '대상 사용자를 찾을 수 없습니다.', 404);
+      if (!repo.revokeBroadcaster(d.channelId, target.id)) throw new AppError('NOT_GRANTED', '방송 권한이 없는 사용자입니다.', 400);
+      // 방송 중이면 권한 회수와 함께 방송을 종료한다 (관리자의 명시적 조치)
+      if (broadcasts.get(d.channelId)?.userId === target.id) endBroadcast(d.channelId, 'revoked');
+      else postSystem(d.channelId, `${target.nickname}님의 방송 권한이 회수되었습니다.`);
+      notifyRole(d.channelId, target.id);
+      return { broadcasters: repo.listBroadcasters(d.channelId) };
+    });
+    handle(socket, 'broadcaster:list', schemas.channelId, (d, user) => {
+      requireModerator(user, d.channelId);
+      return { broadcasters: repo.listBroadcasters(d.channelId) };
     });
     handle(socket, 'user:unban', schemas.unban, (d, user) => {
       requireModerator(user, d.channelId);
@@ -394,8 +438,13 @@ export function initRealtime(server: Server) {
     // ---- 방송 ----
     handle(socket, 'broadcast:start', schemas.start, (d, user) => {
       requireJoined(socket, d.channelId);
-      requireModerator(user, d.channelId);
+      if (!repo.canBroadcast(user, d.channelId)) {
+        throw new AppError('FORBIDDEN', '이 채널에서 방송할 권한이 없습니다. 채널 관리자에게 방송 권한을 요청하세요.', 403);
+      }
       if (broadcasts.has(d.channelId)) throw new AppError('ALREADY_LIVE', '이미 이 채널에서 방송이 진행 중입니다.', 409);
+      if ([...broadcasts.values()].some((x) => x.socketId === socket.id)) {
+        throw new AppError('ALREADY_LIVE', '이미 다른 채널에서 방송 중입니다. 먼저 방송을 종료해 주세요.', 409);
+      }
       const b: Broadcast = {
         channelId: d.channelId, socketId: socket.id, userId: user.id, nickname: user.nickname,
         startedAt: Date.now(), hasAudio: d.hasAudio, viewers: new Map(),
@@ -405,10 +454,13 @@ export function initRealtime(server: Server) {
       postSystem(d.channelId, `${user.nickname}님이 방송을 시작했습니다.`);
       scheduleFlush(d.channelId);
     });
+    // 방송 종료: 방송 중인 소켓 본인이거나 채널 관리자. 방송자는 다른 채널에 있어도 종료할 수 있다.
     handle(socket, 'broadcast:stop', schemas.channelId, (d, user) => {
-      requireJoined(socket, d.channelId);
-      requireModerator(user, d.channelId);
-      if (!broadcasts.has(d.channelId)) throw new AppError('NOT_LIVE', '진행 중인 방송이 없습니다.', 400);
+      const b = broadcasts.get(d.channelId);
+      if (!repo.canModerate(user, d.channelId) && b?.socketId !== socket.id) {
+        throw new AppError('FORBIDDEN', '이 작업은 방송 중인 사용자 또는 채널 관리자만 할 수 있습니다.', 403);
+      }
+      if (!b) throw new AppError('NOT_LIVE', '진행 중인 방송이 없습니다.', 400);
       endBroadcast(d.channelId, 'stopped');
     });
     handle(socket, 'broadcast:watch', schemas.channelId, (d, user) => {
@@ -434,7 +486,6 @@ export function initRealtime(server: Server) {
     });
     // WebRTC 연결 협상 메시지 중계 (영상 자체는 서버를 거치지 않음)
     handle(socket, 'webrtc:signal', schemas.signal, (d) => {
-      requireJoined(socket, d.channelId);
       const b = broadcasts.get(d.channelId);
       if (!b) throw new AppError('NOT_LIVE', '진행 중인 방송이 없습니다.', 400);
       const fromBroadcaster = b.socketId === socket.id;
@@ -444,6 +495,8 @@ export function initRealtime(server: Server) {
     });
 
     socket.on('disconnect', () => {
+      // 방송자 소켓이 끊기면(탭 종료·네트워크 단절) 화면 캡처도 사라지므로 방송을 종료한다
+      for (const b of [...broadcasts.values()]) if (b.socketId === socket.id) endBroadcast(b.channelId, 'disconnected');
       leaveChannel(socket, false);
       eventBucket.delete(socket.id);
     });

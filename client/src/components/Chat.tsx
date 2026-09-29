@@ -3,6 +3,7 @@ import type { ChatState } from '../hooks/useChat';
 import type { ConnState, Message, Notice, PendingMessage } from '../lib/types';
 import { charCount, dayKey, fmtDate, fmtTime } from '../lib/util';
 import { Icon } from './Icon';
+import { MoreMenu } from './MoreMenu';
 import { Avatar } from './ProfileMenu';
 
 interface Props {
@@ -19,6 +20,7 @@ interface Props {
   onLoadOlder: () => void;
   onDelete: (m: Message) => void;
   onKick: (userId: string, nickname: string) => void;
+  onSetBroadcaster: (userId: string, nickname: string, grant: boolean) => void;
 }
 
 export function Chat(p: Props) {
@@ -95,7 +97,7 @@ export function Chat(p: Props) {
       lastDay = dk; lastUser = null;
     }
     const grouped = m.kind === 'user' && m.userId === lastUser && m.createdAt - lastAt < 5 * 60_000;
-    rows.push(<MessageRow key={m.id} m={m} mine={m.userId === p.userId} grouped={grouped} canModerate={p.canModerate} ownerId={state.channel?.ownerId ?? null} onDelete={p.onDelete} onKick={p.onKick} />);
+    rows.push(<MessageRow key={m.id} m={m} mine={m.userId === p.userId} grouped={grouped} canModerate={p.canModerate} ownerId={state.channel?.ownerId ?? null} targetRole={state.participants.find((u) => u.id === m.userId)?.role} onDelete={p.onDelete} onKick={p.onKick} onSetBroadcaster={p.onSetBroadcaster} />);
     lastUser = m.kind === 'user' ? m.userId : null;
     lastAt = m.createdAt;
   }
@@ -148,9 +150,10 @@ function NoticeBar({ notice }: { notice: Notice }) {
   );
 }
 
-function MessageRow({ m, mine, grouped, canModerate, ownerId, onDelete, onKick }: {
-  m: Message; mine: boolean; grouped: boolean; canModerate: boolean; ownerId: string | null;
+function MessageRow({ m, mine, grouped, canModerate, ownerId, targetRole, onDelete, onKick, onSetBroadcaster }: {
+  m: Message; mine: boolean; grouped: boolean; canModerate: boolean; ownerId: string | null; targetRole?: string;
   onDelete: (m: Message) => void; onKick: (userId: string, nickname: string) => void;
+  onSetBroadcaster: (userId: string, nickname: string, grant: boolean) => void;
 }) {
   if (m.kind === 'system') {
     return <div className="my-2 text-center"><span className="inline-block rounded-full bg-ink-700 px-3 py-1 text-xs text-mist-400">{m.body}</span></div>;
@@ -159,7 +162,14 @@ function MessageRow({ m, mine, grouped, canModerate, ownerId, onDelete, onKick }
   const actions = canModerate && !m.deleted && (
     <span className="flex shrink-0 items-center gap-0.5 self-center opacity-100 transition-opacity focus-within:opacity-100 md:opacity-0 md:group-hover:opacity-100">
       <button className="rounded p-1 text-mist-500 hover:bg-ink-600 hover:text-coral-400" onClick={() => onDelete(m)} aria-label="메시지 삭제" title="메시지 삭제"><Icon name="trash" size={14} /></button>
-      {canKick && <button className="rounded p-1 text-mist-500 hover:bg-ink-600 hover:text-coral-400" onClick={() => onKick(m.userId!, m.nickname ?? '')} aria-label={`${m.nickname} 강퇴`} title="강퇴"><Icon name="ban" size={14} /></button>}
+      {canKick && (
+        <MoreMenu label={`${m.nickname} 관리 메뉴`} items={[
+          // 접속 중인 사용자(역할을 아는 경우)만 방송 권한 부여/회수를 표시
+          ...(targetRole === 'member' ? [{ label: '방송 권한 부여', icon: 'radio' as const, onClick: () => onSetBroadcaster(m.userId!, m.nickname ?? '', true) }] : []),
+          ...(targetRole === 'broadcaster' ? [{ label: '방송 권한 회수', icon: 'stop' as const, onClick: () => onSetBroadcaster(m.userId!, m.nickname ?? '', false) }] : []),
+          { label: '강퇴', icon: 'ban' as const, danger: true, onClick: () => onKick(m.userId!, m.nickname ?? '') },
+        ]} />
+      )}
     </span>
   );
 

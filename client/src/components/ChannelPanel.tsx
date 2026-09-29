@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { ChatState } from '../hooks/useChat';
-import type { Ban, User } from '../lib/types';
+import type { Ban, Broadcaster, User } from '../lib/types';
 import type { AppConfig } from '../lib/types';
 import { Icon } from './Icon';
+import { MoreMenu } from './MoreMenu';
 import { Avatar } from './ProfileMenu';
 
 interface Props {
@@ -10,8 +11,11 @@ interface Props {
   user: User;
   config: AppConfig;
   canModerate: boolean;
+  canBroadcast: boolean;
   isSharing: boolean;
   starting: boolean;
+  /** 이 채널이 아닌 다른 채널에서 내가 방송 중 */
+  sharingElsewhere: boolean;
   shareBlocked: null | 'insecure' | 'unsupported';
   onStart: () => void;
   onStop: () => void;
@@ -20,11 +24,13 @@ interface Props {
   onKick: (userId: string, nickname: string) => void;
   onListBans: () => Promise<Ban[]>;
   onUnban: (userId: string) => Promise<Ban[]>;
+  onSetBroadcaster: (userId: string, nickname: string, grant: boolean) => void;
+  onListBroadcasters: () => Promise<Broadcaster[]>;
   onDeleteChannel: () => void;
   bansVersion: number;
 }
 
-const roleBadge = { owner: '채널 관리자', admin: '서버 관리자', member: '' } as const;
+const roleBadge = { owner: '채널 관리자', admin: '서버 관리자', broadcaster: '방송 권한', member: '' } as const;
 
 export function ChannelPanel(p: Props) {
   const { state } = p;
@@ -34,12 +40,18 @@ export function ChannelPanel(p: Props) {
   const [noticeErr, setNoticeErr] = useState<string | null>(null);
   const [bans, setBans] = useState<Ban[]>([]);
   const [banErr, setBanErr] = useState<string | null>(null);
+  const [casters, setCasters] = useState<Broadcaster[]>([]);
 
   useEffect(() => { setNoticeText(state.notice?.body ?? ''); }, [state.notice?.body, ch?.id]);
   useEffect(() => {
     if (!p.canModerate || state.status !== 'joined') return;
     p.onListBans().then((b) => { setBans(b); setBanErr(null); }).catch((e: Error) => setBanErr(e.message));
   }, [p.canModerate, ch?.id, state.status, p.bansVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!p.canModerate || state.status !== 'joined') return;
+    p.onListBroadcasters().then(setCasters).catch(() => {});
+  }, [p.canModerate, ch?.id, state.status, p.bansVersion, state.participants]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!ch) return <div className="p-4 text-sm text-mist-500">채널 정보를 불러오는 중…</div>;
   const live = state.broadcast.live;
@@ -62,13 +74,13 @@ export function ChannelPanel(p: Props) {
     <div className="min-h-0 flex-1 overflow-y-auto bg-ink-800 lg:border-l lg:border-ink-600" aria-label="채널 정보">
       <div className={section}>
         <h3 className={h}><Icon name="radio" size={14} /> 방송</h3>
-        {p.canModerate ? (
+        {p.canBroadcast ? (
           <>
             {p.isSharing ? (
               <button className="btn-danger w-full" onClick={p.onStop}><Icon name="stop" size={14} /> 방송 종료</button>
             ) : (
-              <button className="btn-primary w-full" onClick={p.onStart} disabled={p.starting || live}>
-                <Icon name="monitor" size={16} /> {p.starting ? '화면 선택 중…' : live ? '이미 방송 중입니다' : '화면 공유 방송 시작'}
+              <button className="btn-primary w-full" onClick={p.onStart} disabled={p.starting || live || p.sharingElsewhere}>
+                <Icon name="monitor" size={16} /> {p.starting ? '화면 선택 중…' : live ? '이미 방송 중입니다' : p.sharingElsewhere ? '다른 채널에서 방송 중입니다' : '화면 공유 방송 시작'}
               </button>
             )}
             {p.shareBlocked === 'insecure' && (
@@ -111,14 +123,34 @@ export function ChannelPanel(p: Props) {
               </span>
               {u.broadcasting && <span className="rounded bg-coral-500 px-1.5 py-px text-[10px] font-extrabold text-white">방송 중</span>}
               {roleBadge[u.role] && <span className="rounded bg-mint-400/15 px-1.5 py-px text-[10px] font-bold text-mint-300">{roleBadge[u.role]}</span>}
-              {p.canModerate && u.id !== p.user.id && u.role === 'member' && (
-                <button className="rounded p-1 text-mist-500 hover:bg-ink-600 hover:text-coral-400" onClick={() => p.onKick(u.id, u.nickname)} aria-label={`${u.nickname} 강퇴`} title="강퇴"><Icon name="ban" size={15} /></button>
+              {p.canModerate && u.id !== p.user.id && (u.role === 'member' || u.role === 'broadcaster') && (
+                <MoreMenu label={`${u.nickname} 관리 메뉴`} items={[
+                  u.role === 'broadcaster'
+                    ? { label: '방송 권한 회수', icon: 'stop', onClick: () => p.onSetBroadcaster(u.id, u.nickname, false) }
+                    : { label: '방송 권한 부여', icon: 'radio', onClick: () => p.onSetBroadcaster(u.id, u.nickname, true) },
+                  { label: '강퇴', icon: 'ban', danger: true, onClick: () => p.onKick(u.id, u.nickname) },
+                ]} />
               )}
             </li>
           ))}
           {state.participants.length === 0 && <li className="text-sm text-mist-500">접속 중인 사람이 없습니다.</li>}
         </ul>
       </div>
+
+      {p.canModerate && (
+        <div className={section}>
+          <h3 className={h}><Icon name="radio" size={14} /> 방송 권한 보유자 · {casters.length}</h3>
+          <ul className="space-y-1.5">
+            {casters.map((c) => (
+              <li key={c.userId} className="flex items-center gap-2 rounded-lg bg-ink-700 px-3 py-2 text-sm">
+                <span className="min-w-0 flex-1 truncate font-semibold">{c.nickname}</span>
+                <button className="btn-secondary !px-2.5 !py-1 text-xs" onClick={() => p.onSetBroadcaster(c.userId, c.nickname, false)}>회수</button>
+              </li>
+            ))}
+            {casters.length === 0 && <li className="text-sm text-mist-500">관리자 외에 방송 권한을 가진 사용자가 없습니다. 참여자 옆 ⋮ 메뉴에서 부여할 수 있어요.</li>}
+          </ul>
+        </div>
+      )}
 
       {p.canModerate && (
         <div className={section}>
