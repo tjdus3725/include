@@ -223,7 +223,7 @@ export function useBroadcast({ channelId, joined, epoch, live, canBroadcast, ice
     const ch = channelRef.current;
     if (!ch) return;
     setView('connecting');
-    setError(null);
+    // 오류 문구는 여기서 지우지 않는다: 연결에 성공(ontrack)했을 때만 지워야, 방금 끝난 내 방송의 종료 안내가 사라지지 않는다
     try {
       const r = await emitAck<{ broadcasterId: string }>('broadcast:watch', { channelId: ch });
       broadcasterId.current = r.broadcasterId;

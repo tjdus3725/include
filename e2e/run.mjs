@@ -122,10 +122,12 @@ async function newUser(nick, { base = HTTP, channel = 'all', viewport = { width:
   await page.goto(`${base}/#/c/${channel}`);
   await page.fill('#nick', nick);
   await page.getByRole('button', { name: '입장하기' }).click();
+  await confirmEntry(page); // 로그인 후 로비/입장 방식 선택 (내 닉네임으로 입장)
   await ready(page);
   contexts.push(ctx);
   return { ctx, page, nick, net };
 }
+const confirmEntry = async (p) => { await p.getByRole('dialog').getByRole('button', { name: '입장하기' }).click(); }; // 입장 방식(내 닉네임) 팝업 확인
 const composer = (p) => p.locator('textarea[aria-label="메시지 입력"]');
 const ready = async (p) => {
   await p.waitForFunction(() => { const t = document.querySelector('textarea[aria-label="메시지 입력"]'); return t && !t.placeholder.startsWith('연결'); }, null, { timeout: 15000 });
@@ -340,16 +342,17 @@ await test('여러 탭은 한 명으로 계산, 탭/연결 종료 시 인원 감
   watcher.close();
 });
 
-await test('채널 퇴장: 나가기 버튼 → 퇴장 메시지·접속 인원 감소·빈 상태 화면, 로그아웃 시 세션 무효화', async () => {
+await test('채널 퇴장: 나가기 버튼 → 퇴장 메시지·접속 인원 감소·로비 화면, 로그아웃 시 세션 무효화', async () => {
   const stay = await newUser('남는사람', { channel: 'demo' });
   const goer = await newUser('나가는사람', { channel: 'demo' });
   await stay.page.getByLabel('2명 접속 중').first().waitFor({ timeout: 6000 });
   await goer.page.getByRole('button', { name: '채널 나가기' }).click();
-  await goer.page.getByText('채널에서 나갔어요').waitFor();
+  await goer.page.getByRole('heading', { name: '방송 로비' }).waitFor();
   await expectText(stay.page, '나가는사람님이 퇴장했습니다');
   await stay.page.getByLabel('1명 접속 중').first().waitFor({ timeout: 6000 });
   // 다시 입장
-  await goer.page.getByRole('button', { name: '전체 채팅으로 입장' }).click();
+  await goer.page.getByRole('button', { name: /전체 채팅/ }).first().click();
+  await confirmEntry(goer.page);
   await ready(goer.page);
   // 로그아웃: 세션 삭제 후 같은 쿠키로 API/소켓 모두 거부
   const cookie = (await goer.ctx.cookies()).find((c) => c.name === 'inchat_sid');
@@ -498,7 +501,7 @@ await test('UI 관리 기능: 공지 고정·메시지 삭제·강퇴·재입장
   const O = await newUser('화면방장', { channel: 'all' });
   await createChannelUI(O.page, '관리 UI 채널', 'UI 로 관리 기능 검증');
   const V = await newUser('문제유저', { channel: 'all' });
-  await V.page.getByRole('button', { name: /관리 UI 채널/ }).click();
+  await V.page.getByRole('button', { name: /관리 UI 채널/ }).click(); await confirmEntry(V.page);
   await ready(V.page);
   assert((await V.page.getByRole('button', { name: '방송 시작', exact: true }).count()) === 0, '일반 사용자에게 방송 시작 버튼이 보임');
   assert((await V.page.getByRole('button', { name: '공지 등록' }).count()) === 0, '일반 사용자에게 공지 등록 UI 가 보임');
@@ -556,6 +559,75 @@ await test('요청 빈도 제한(기본 설정): 로그인 연타 차단', async
   } finally { srv.kill('SIGTERM'); }
 });
 
+await test('로비 → 입장 방식(익명) 선택 → 익명 별칭만 노출 → 방송 요청 → 관리자 알림에서 부여', async () => {
+  const raw = async (nick) => {
+    const ctx = await browser.newContext({ viewport: { width: 1300, height: 800 }, locale: 'ko-KR' });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => pageErrors.push(`${nick}: ${e.message}`));
+    page.on('dialog', (d) => d.accept());
+    await page.goto(`${HTTP}/`);
+    await page.fill('#nick', nick);
+    await page.getByRole('button', { name: '입장하기' }).click();
+    contexts.push(ctx);
+    return { ctx, page };
+  };
+  // 방장: 채널을 만들고 방송을 시작
+  const A = await raw('로비방장');
+  await A.page.getByRole('heading', { name: '방송 로비' }).waitFor();
+  assert((await A.page.locator('textarea[aria-label="메시지 입력"]').count()) === 0, '로그인 직후 방에 바로 입장됨(로비가 아님)');
+  await A.page.getByRole('button', { name: '방 만들기' }).click();
+  await A.page.fill('#ch-name', '로비 검증방');
+  await A.page.getByRole('button', { name: '만들기', exact: true }).click();
+  await ready(A.page);
+  await A.page.getByRole('button', { name: '방송 시작', exact: true }).first().click();
+  await A.page.getByText('LIVE', { exact: true }).first().waitFor();
+  // 구경꾼: 로비에서 진행 중인 방송을 골라 익명으로 입장
+  const B = await raw('로비구경꾼');
+  await B.page.getByRole('heading', { name: '방송 로비' }).waitFor();
+  const card = B.page.getByRole('button', { name: /로비 검증방/ }).filter({ hasText: '방송' }).first();
+  await card.waitFor();
+  assert((await card.innerText()).includes('LIVE'), '로비에 진행 중인 방송이 LIVE 로 표시되지 않음');
+  await card.click();
+  const dlg = B.page.getByRole('dialog');
+  assert((await dlg.innerText()).includes('내 닉네임으로 입장') && (await dlg.innerText()).includes('로비구경꾼'), '입장 방식 선택 팝업이 아님');
+  await dlg.getByText('익명으로 입장').click();
+  await dlg.getByRole('button', { name: '입장하기' }).click();
+  await ready(B.page);
+  const alias = (await B.page.getByText(/익명\d{4}님이 입장했습니다/).first().innerText()).match(/익명\d{4}/)[0];
+  await say(B.page, '익명으로 남기는 메시지');
+  await expectText(A.page, '익명으로 남기는 메시지');
+  const seen = await A.page.locator('[role=log]').innerText();
+  assert(seen.includes(alias) && !seen.includes('로비구경꾼'), `익명 사용자의 실제 닉네임이 노출됨: ${seen.replace(/\s+/g, ' ')}`);
+  const hist = await B.page.evaluate(async (id) => (await fetch(`/api/channels/${id}/messages?before=999999&limit=50`)).json(), A.page.url().match(/#\/c\/([\w-]+)/)[1]);
+  assert(!JSON.stringify(hist).includes('로비구경꾼'), '이전 메시지 조회에 실제 닉네임이 노출됨');
+  assert((await B.page.getByRole('navigation', { name: '채널 목록' }).getByText('현재 위치').count()) === 1, '현재 위치 표시가 없음');
+  assert((await B.page.getByRole('button', { name: /알림/ }).count()) === 0, '일반 사용자에게 알림 아이콘이 보임');
+  // 관리자 계정 표시를 눌러 방송 요청
+  await B.page.getByRole('button', { name: /로비방장 관리자에게 방송 요청 보내기/ }).click();
+  await B.page.getByRole('dialog', { name: '방송 요청 보내기' }).getByRole('button', { name: '전송', exact: true }).click();
+  await B.page.getByText('방송 요청을 보냈습니다').waitFor();
+  await B.page.getByRole('button', { name: /로비방장 관리자에게 방송 요청 보내기/ }).click();
+  await B.page.getByRole('button', { name: '전송', exact: true }).click();
+  await B.page.getByText('이미 방송 요청을 보냈습니다').first().waitFor({ timeout: 5000 });
+  await B.page.getByRole('button', { name: '취소' }).click();
+  // 관리자 알림: 누가·언제·어느 채널
+  await A.page.getByRole('button', { name: /알림 1건/ }).click();
+  const txt = await A.page.getByRole('dialog', { name: '방송 권한 요청 알림' }).innerText();
+  assert(txt.includes(alias) && txt.includes('로비 검증방') && /오늘 \d{2}:\d{2}/.test(txt), `알림 내용 이상: ${txt.replace(/\s+/g, ' ')}`);
+  await A.page.screenshot({ path: path.join(out, 'desktop-bell.png') });
+  // 서버가 권한을 보장하는지: 요청만으로는 방송 불가, 승인 후에만 가능
+  const cookieB = (await B.ctx.cookies()).find((c) => c.name === 'inchat_sid');
+  assert((await B.page.getByRole('button', { name: '방송 시작', exact: true }).count()) === 0, '요청만으로 방송 버튼이 열림');
+  await A.page.reload();
+  await A.page.getByRole('button', { name: /알림 1건/ }).waitFor({ timeout: 6000 }); // 나중에 접속해도 남아 있음
+  await A.page.getByRole('button', { name: /알림 1건/ }).click();
+  await A.page.getByRole('button', { name: '방송 권한 부여' }).click();
+  await A.page.getByRole('button', { name: /알림 0건/ }).waitFor({ timeout: 6000 });
+  await B.page.getByText('방송 권한이 부여되었습니다').first().waitFor({ timeout: 6000 });
+  assert(cookieB, 'ok');
+  return `익명 별칭 ${alias} 로만 노출, 요청 → 알림(누가/언제/채널) → 부여`;
+});
+
 // =====================================================================
 console.log('\n[4] 화면 공유 · 시청');
 await test('보안 컨텍스트: http://내부IP 는 안내, localhost·https://내부IP 는 허용', async () => {
@@ -592,7 +664,7 @@ await test('방송 시작 → 다른 브라우저에서 시청(영상 수신) �
   await createChannelUI(S.page, '방송 검증 채널');
   viewer = await newUser('시청자', { base: HTTP_LAN, channel: 'all' });
   const V = viewer;
-  await V.page.getByRole('button', { name: /방송 검증 채널/ }).click();
+  await V.page.getByRole('button', { name: /방송 검증 채널/ }).click(); await confirmEntry(V.page);
   await ready(V.page);
   await S.page.getByRole('button', { name: '방송 시작', exact: true }).first().click();
   await S.page.getByText('LIVE').first().waitFor({ timeout: 10000 });
@@ -633,7 +705,7 @@ await test('모바일 레이아웃: 방송 위/채팅 아래 세로 배치, 채�
   await M.page.getByRole('button', { name: '채널 목록 열기/닫기' }).click();
   await M.page.getByRole('navigation', { name: '채널 목록' }).waitFor();
   await M.page.screenshot({ path: path.join(out, 'mobile-drawer.png') });
-  await M.page.getByRole('button', { name: /방송 검증 채널/ }).click();
+  await M.page.getByRole('button', { name: /방송 검증 채널/ }).click(); await confirmEntry(M.page);
   await ready(M.page);
   assert((await M.page.getByRole('navigation', { name: '채널 목록' }).count()) === 0, '채널 선택 후 메뉴가 접히지 않음');
   await M.page.waitForFunction(() => { const v = document.querySelector('video'); return v && v.videoWidth > 0; }, null, { timeout: 25000 });
@@ -651,7 +723,7 @@ await test('모바일 레이아웃: 방송 위/채팅 아래 세로 배치, 채�
 await test('모바일: 방송 없는 채널에서 채팅 중심 + 한글 전송 + 참여자·관리 시트', async () => {
   const M = mobileViewer;
   await M.page.getByRole('button', { name: '채널 목록 열기/닫기' }).click();
-  await M.page.getByRole('button', { name: /자유 대화/ }).click();
+  await M.page.getByRole('button', { name: /자유 대화/ }).click(); await confirmEntry(M.page);
   await ready(M.page);
   await say(M.page, '모바일에서 한글 메시지 보내기 ㅎㅎ');
   await expectText(M.page, '모바일에서 한글 메시지 보내기');
@@ -687,7 +759,7 @@ await test('방송 중 다른 채널로 이동해도 방송 유지 → 방송 �
   await S.page.getByRole('button', { name: '방송 시작', exact: true }).first().click();
   await V.page.waitForFunction(() => document.querySelector('video')?.videoWidth > 0, null, { timeout: 25000 });
   // 방송자가 다른 채널(자유 대화)로 이동
-  await S.page.getByRole('button', { name: /자유 대화/ }).click();
+  await S.page.getByRole('button', { name: /자유 대화/ }).click(); await confirmEntry(S.page);
   await ready(S.page);
   const banner = S.page.getByRole('status').filter({ hasText: '에서 방송 중입니다' });
   await banner.waitFor({ timeout: 5000 });
@@ -701,7 +773,7 @@ await test('방송 중 다른 채널로 이동해도 방송 유지 → 방송 �
   assert(live.includes('방송 검증 채널'), `서버에서 방송이 종료됨 (live: ${live})`);
   // 채널 나가기(빈 화면)로 가도 유지
   await S.page.getByRole('button', { name: '채널 나가기' }).click();
-  await S.page.getByText('채널에서 나갔어요').waitFor();
+  await S.page.getByRole('heading', { name: '방송 로비' }).waitFor();
   await banner.waitFor({ timeout: 3000 });
   assert((await V.page.locator('video').count()) === 1, '채널 나가기 후 방송이 종료됨');
   // 방송 채널로 돌아오면 송출 화면(미리보기)이 다시 보인다
@@ -709,7 +781,7 @@ await test('방송 중 다른 채널로 이동해도 방송 유지 → 방송 �
   await S.page.locator('video').first().waitFor({ timeout: 8000 });
   await S.page.getByRole('button', { name: '방송 종료' }).first().waitFor();
   // 다시 이동한 뒤 배너의 종료 버튼으로 종료
-  await S.page.getByRole('button', { name: /자유 대화/ }).click();
+  await S.page.getByRole('button', { name: /자유 대화/ }).click(); await confirmEntry(S.page);
   await banner.waitFor();
   await banner.getByRole('button', { name: '방송 종료' }).click();
   await V.page.locator('video').waitFor({ state: 'detached', timeout: 8000 });
@@ -721,7 +793,7 @@ await test('방송 권한 부여·회수 (⋮ 메뉴): 부여 → 방송 가능 
   const O = await newUser('권한관리자', { channel: 'all' });
   await createChannelUI(O.page, '권한 채널');
   const T = await newUser('권한대상', { channel: 'all' });
-  await T.page.getByRole('button', { name: /권한 채널/ }).click();
+  await T.page.getByRole('button', { name: /권한 채널/ }).click(); await confirmEntry(T.page);
   await ready(T.page);
   assert((await T.page.getByRole('button', { name: '방송 시작', exact: true }).count()) === 0, '권한 없는 사용자에게 방송 버튼이 보임');
   // 금지 아이콘 대신 ⋮ 메뉴, 메뉴 항목 확인
@@ -748,7 +820,7 @@ await test('방송 권한 부여·회수 (⋮ 메뉴): 부여 → 방송 가능 
 });
 
 await test('방송자 이탈(탭 닫기) 시 방송 자동 종료·서버 상태 정리', async () => {
-  await streamer.page.getByRole('button', { name: /방송 검증 채널/ }).click(); // 이전 테스트에서 다른 채널로 이동해 있음
+  await streamer.page.getByRole('button', { name: /방송 검증 채널/ }).click(); await confirmEntry(streamer.page); // 이전 테스트에서 다른 채널로 이동해 있음
   await ready(streamer.page);
   await streamer.page.getByRole('button', { name: '방송 시작', exact: true }).first().click();
   await viewer.page.getByText('LIVE').first().waitFor({ timeout: 10000 });
