@@ -220,8 +220,7 @@ export function canBroadcast(user: UserRow, channelId: string): boolean {
   return canModerate(user, channelId) || isBroadcaster(channelId, user.id);
 }
 export function grantBroadcaster(channelId: string, userId: string) {
-  // 이미 소유자 행이 있으면 그대로 둔다 (PK 충돌 시 무시)
-  db.prepare(`INSERT INTO channel_roles (channel_id, user_id, role, granted_at) VALUES (?, ?, 'broadcaster', ?) ON CONFLICT(channel_id, user_id) DO NOTHING`).run(channelId, userId, Date.now());
+  db.prepare(`INSERT OR IGNORE INTO channel_roles (channel_id, user_id, role, granted_at) VALUES (?, ?, 'broadcaster', ?)`).run(channelId, userId, Date.now());
 }
 export function revokeBroadcaster(channelId: string, userId: string): boolean {
   return db.prepare(`DELETE FROM channel_roles WHERE channel_id = ? AND user_id = ? AND role = 'broadcaster'`).run(channelId, userId).changes > 0;
@@ -231,10 +230,92 @@ export function listBroadcasters(channelId: string) {
     .prepare(`SELECT u.id AS userId, u.nickname FROM channel_roles r JOIN users u ON u.id = r.user_id WHERE r.channel_id = ? AND r.role = 'broadcaster' ORDER BY r.granted_at`)
     .all(channelId) as { userId: string; nickname: string }[];
 }
-export function roleOf(user: UserRow, channelId: string): 'owner' | 'admin' | 'broadcaster' | 'member' {
+// ---- 매니저: 차단/차단 해제만 할 수 있는 채널별 역할 ----
+export function isManager(channelId: string, userId: string): boolean {
+  return !!db.prepare(`SELECT 1 FROM channel_roles WHERE channel_id = ? AND user_id = ? AND role = 'manager'`).get(channelId, userId);
+}
+export function grantManager(channelId: string, userId: string) {
+  db.prepare(`INSERT OR IGNORE INTO channel_roles (channel_id, user_id, role, granted_at) VALUES (?, ?, 'manager', ?)`).run(channelId, userId, Date.now());
+}
+export function revokeManager(channelId: string, userId: string): boolean {
+  return db.prepare(`DELETE FROM channel_roles WHERE channel_id = ? AND user_id = ? AND role = 'manager'`).run(channelId, userId).changes > 0;
+}
+export function listManagers(channelId: string) {
+  return db
+    .prepare(`SELECT u.id AS userId, u.nickname FROM channel_roles r JOIN users u ON u.id = r.user_id WHERE r.channel_id = ? AND r.role = 'manager' ORDER BY r.granted_at`)
+    .all(channelId) as { userId: string; nickname: string }[];
+}
+/** 차단/차단 해제 권한: 서버 관리자, 채널 개설자, 매니저 */
+export function canBan(user: UserRow, channelId: string): boolean {
+  return canModerate(user, channelId) || isManager(channelId, user.id);
+}
+/**
+ * 누가 누구를 차단할 수 있는가 (위계: 서버 관리자 > 채널 관리자 > 매니저 > 그 외)
+ *  - 서버 관리자는 차단할 수 없다 (다른 서버 관리자 포함: 관리자는 차단 검사를 받지 않는다)
+ *  - 서버 관리자: 그 외 모든 계정
+ *  - 채널 관리자: 자기 채널의 매니저·일반 사용자
+ *  - 매니저: 일반 사용자와 방송 권한 보유자만 (서버/채널 관리자, 다른 매니저는 불가)
+ * 거부 사유(한국어)를 돌려주고, 가능하면 null.
+ */
+export function banDenied(actor: UserRow, target: UserRow, channelId: string): string | null {
+  if (target.id === actor.id) return '자기 자신은 차단할 수 없습니다.';
+  if (target.is_admin === 1) return '서버 관리자는 차단할 수 없습니다.';
+  if (actor.is_admin === 1) return null;
+  if (isOwner(channelId, target.id)) return '채널 관리자는 차단할 수 없습니다.';
+  if (isOwner(channelId, actor.id)) return null;
+  if (isManager(channelId, actor.id)) return isManager(channelId, target.id) ? '매니저는 다른 매니저를 차단할 수 없습니다.' : null;
+  return '차단 권한이 없습니다.';
+}
+export function roleOf(user: UserRow, channelId: string): 'owner' | 'admin' | 'manager' | 'broadcaster' | 'member' {
   if (isOwner(channelId, user.id)) return 'owner';
   if (user.is_admin === 1) return 'admin';
+  if (isManager(channelId, user.id)) return 'manager';
   return isBroadcaster(channelId, user.id) ? 'broadcaster' : 'member';
+}
+
+// ---------- 채널 방문 기록 / 알림 ----------
+export function recordVisit(userId: string, channelId: string, anonymous: boolean, alias: string) {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO channel_visits (user_id, channel_id, first_at, last_at, anonymous, alias) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, channel_id) DO UPDATE SET last_at = excluded.last_at, anonymous = excluded.anonymous, alias = excluded.alias`,
+  ).run(userId, channelId, now, now, anonymous ? 1 : 0, alias);
+}
+export function visitorIds(channelId: string): string[] {
+  return (db.prepare('SELECT user_id FROM channel_visits WHERE channel_id = ?').all(channelId) as { user_id: string }[]).map((r) => r.user_id);
+}
+/** 접속 중이 아닌 사용자의 표시 이름: 마지막 입장이 익명이면 별칭 */
+export function lastDisplayName(channelId: string, userId: string): string {
+  const v = db.prepare('SELECT anonymous, alias FROM channel_visits WHERE user_id = ? AND channel_id = ?').get(userId, channelId) as { anonymous: number; alias: string | null } | undefined;
+  if (v?.anonymous && v.alias) return v.alias;
+  return getUser(userId)?.nickname ?? '알 수 없음';
+}
+
+export interface NotificationDTO { id: number; kind: string; channelId: string | null; data: Record<string, unknown>; createdAt: number; read: boolean }
+type NotifRow = { id: number; kind: string; channel_id: string | null; data: string; created_at: number; read_at: number | null };
+const notifDTO = (r: NotifRow): NotificationDTO => ({ id: r.id, kind: r.kind, channelId: r.channel_id, data: JSON.parse(r.data) as Record<string, unknown>, createdAt: r.created_at, read: r.read_at !== null });
+export function addNotification(userId: string, kind: string, channelId: string | null, data: Record<string, unknown>): NotificationDTO {
+  const info = db.prepare('INSERT INTO notifications (user_id, kind, channel_id, data, created_at) VALUES (?, ?, ?, ?, ?)').run(userId, kind, channelId, JSON.stringify(data), Date.now());
+  // 사용자당 최근 50개만 보관
+  db.prepare('DELETE FROM notifications WHERE user_id = ? AND id NOT IN (SELECT id FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 50)').run(userId, userId);
+  return notifDTO(db.prepare('SELECT id, kind, channel_id, data, created_at, read_at FROM notifications WHERE id = ?').get(Number(info.lastInsertRowid)) as NotifRow);
+}
+export function listNotifications(userId: string): NotificationDTO[] {
+  return (db.prepare('SELECT id, kind, channel_id, data, created_at, read_at FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 50').all(userId) as NotifRow[]).map(notifDTO);
+}
+export function markNotificationsRead(userId: string) {
+  db.prepare('UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL').run(Date.now(), userId);
+}
+export function clearNotifications(userId: string) {
+  db.prepare('DELETE FROM notifications WHERE user_id = ?').run(userId);
+}
+/** 내가 관리하는 채널(서버 관리자는 전부, 개설자는 자기 채널)의 방송 권한 보유자 */
+export function listManagedBroadcasters(user: UserRow) {
+  const base = `SELECT r.channel_id AS channelId, c.name AS channelName, r.user_id AS userId
+                FROM channel_roles r JOIN channels c ON c.id = r.channel_id WHERE r.role = 'broadcaster'`;
+  return (user.is_admin === 1
+    ? db.prepare(`${base} ORDER BY c.name, r.granted_at`).all()
+    : db.prepare(`${base} AND r.channel_id IN (SELECT channel_id FROM channel_roles WHERE user_id = ? AND role = 'owner') ORDER BY c.name, r.granted_at`).all(user.id)) as { channelId: string; channelName: string; userId: string }[];
 }
 
 // ---------- 메시지 ----------

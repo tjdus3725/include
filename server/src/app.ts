@@ -163,7 +163,7 @@ export function createApp() {
     const ch = repo.getChannel(req.params.id);
     if (!ch) throw new AppError('CHANNEL_NOT_FOUND', '존재하지 않는 채널입니다.', 404);
     const user = req.auth!.user;
-    if (!repo.canModerate(user, ch.id) && repo.getActiveBan(ch.id, user.id, repo.hashIp(req.socket.remoteAddress))) {
+    if (user.is_admin !== 1 && repo.getActiveBan(ch.id, user.id, repo.hashIp(req.socket.remoteAddress))) {
       throw new AppError('BANNED', '이 채널에서 이용이 제한되었습니다.', 403);
     }
     const before = Number.parseInt(String(req.query.before ?? ''), 10);

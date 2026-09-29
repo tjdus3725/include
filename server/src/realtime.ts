@@ -55,6 +55,20 @@ export function displayName(channelId: string, user: repo.UserRow): string {
   const i = identities.get(idKey(channelId, user.id));
   return i?.anonymous ? i.alias : user.nickname;
 }
+/** 사용자 ID 로 표시 이름 조회: 접속 중이면 현재 신원, 아니면 마지막 입장 방식(익명이면 별칭) */
+function nameIn(channelId: string, userId: string): string {
+  const i = identities.get(idKey(channelId, userId));
+  return i ? (i.anonymous ? i.alias : (repo.getUser(userId)?.nickname ?? '알 수 없음')) : repo.lastDisplayName(channelId, userId);
+}
+const withNames = (channelId: string, rows: { userId: string }[]) => rows.map((r) => ({ userId: r.userId, nickname: nameIn(channelId, r.userId) }));
+
+/** 알림을 저장하고 접속 중인 그 사용자의 모든 탭에 실시간으로 보낸다 */
+function pushNotification(userId: string, kind: string, channelId: string | null, data: Record<string, unknown>) {
+  const n = repo.addNotification(userId, kind, channelId, data);
+  for (const s of io.sockets.sockets.values()) if ((s as S).data.userId === userId) s.emit('notification:new', { notification: n });
+}
+const channelNameOf = (channelId: string) => repo.getChannel(channelId)?.name ?? '';
+
 const isAnon = (channelId: string, userId: string) => !!identities.get(idKey(channelId, userId))?.anonymous;
 
 /** 방송 요청을 검토할 수 있는 접속자(그 채널의 개설자, 서버 관리자)에게만 이벤트를 보낸다 */
@@ -105,11 +119,11 @@ function participantsOf(channelId: string, viewerIsModerator = false) {
       nickname: displayName(channelId, u),
       color: isAnon(channelId, u.id) ? repo.ANON_COLOR : u.color,
       // '방송 권한 보유자' 정보는 채널 관리자(개설자·서버 관리자)에게만 내려간다 (일반 사용자에게는 일반 참여자로 보임)
-      role: u.id === ownerId ? 'owner' : u.is_admin ? 'admin' : viewerIsModerator && repo.isBroadcaster(channelId, u.id) ? 'broadcaster' : 'member',
+      role: u.id === ownerId ? 'owner' : u.is_admin ? 'admin' : repo.isManager(channelId, u.id) ? 'manager' : viewerIsModerator && repo.isBroadcaster(channelId, u.id) ? 'broadcaster' : 'member',
       broadcasting: b?.userId === u.id,
     });
   }
-  const rank = { owner: 0, admin: 1, broadcaster: 2, member: 3 } as const;
+  const rank = { owner: 0, admin: 1, manager: 2, broadcaster: 3, member: 4 } as const;
   return out.sort((a, b2) => rank[a.role as keyof typeof rank] - rank[b2.role as keyof typeof rank] || a.nickname.localeCompare(b2.nickname, 'ko'));
 }
 
@@ -155,6 +169,9 @@ function requireJoined(socket: S, channelId: string) {
   if (socket.data.channelId !== channelId) {
     throw new AppError('NOT_JOINED', '먼저 채널에 입장해야 합니다.', 400);
   }
+}
+function requireBanPower(user: repo.UserRow, channelId: string) {
+  if (!repo.canBan(user, channelId)) throw new AppError('FORBIDDEN', '차단 권한이 없습니다. (채널 관리자, 매니저, 서버 관리자만 가능)', 403);
 }
 function requireModerator(user: repo.UserRow, channelId: string) {
   if (!repo.canModerate(user, channelId)) {
@@ -319,7 +336,7 @@ export function initRealtime(server: Server) {
       const ch = repo.getChannel(d.channelId);
       if (!ch) throw new AppError('CHANNEL_NOT_FOUND', '존재하지 않는 채널입니다.', 404);
       const mod = repo.canModerate(user, ch.id);
-      if (!mod) {
+      if (user.is_admin !== 1) { // 서버 관리자만 이용 제한을 받지 않는다 (개설자도 서버 관리자에게 차단될 수 있다)
         const ban = repo.getActiveBan(ch.id, user.id, socket.data.ipHash);
         if (ban) {
           const until = ban.expires_at ? `${new Date(ban.expires_at).toLocaleString('ko-KR')}까지` : '기한 없이';
@@ -329,7 +346,9 @@ export function initRealtime(server: Server) {
       // 이 입장에서 사용할 신원(내 닉네임 / 익명 별칭). 같은 사용자의 다른 탭도 같은 신원을 쓴다.
       // 채널을 개설한 관리자는 익명으로 입장할 수 없다 (항상 본인 닉네임)
       const anonymous = !!d.anonymous && !repo.isOwner(ch.id, user.id);
-      identities.set(idKey(ch.id, user.id), { anonymous, alias: makeAlias(ch.id, user.id) });
+      const alias = makeAlias(ch.id, user.id);
+      identities.set(idKey(ch.id, user.id), { anonymous, alias });
+      repo.recordVisit(user.id, ch.id, anonymous, alias); // 이 채널의 방송 시작 알림을 받기 위한 방문 기록
       joinChannel(socket, user, ch.id);
       let messages: repo.MessageDTO[];
       let hasMore = false;
@@ -343,7 +362,7 @@ export function initRealtime(server: Server) {
       }
       return {
         channel: channelDTO(ch),
-        me: { role: repo.roleOf(user, ch.id), canModerate: mod, canBroadcast: repo.canBroadcast(user, ch.id) },
+        me: { role: repo.roleOf(user, ch.id), canModerate: mod, canBroadcast: repo.canBroadcast(user, ch.id), canBan: repo.canBan(user, ch.id) },
         messages,
         hasMore,
         reset,
@@ -360,8 +379,7 @@ export function initRealtime(server: Server) {
     // 메시지 전송
     handle(socket, 'message:send', schemas.send, (d, user) => {
       requireJoined(socket, d.channelId);
-      const mod = repo.canModerate(user, d.channelId);
-      if (!mod && repo.getActiveBan(d.channelId, user.id, socket.data.ipHash)) {
+      if (user.is_admin !== 1 && repo.getActiveBan(d.channelId, user.id, socket.data.ipHash)) {
         throw new AppError('BANNED', '이 채널에서 이용이 제한되었습니다.', 403);
       }
       // 재전송(같은 clientId)은 이미 저장된 메시지를 그대로 돌려줘 중복 저장을 막는다
@@ -414,11 +432,11 @@ export function initRealtime(server: Server) {
     });
 
     handle(socket, 'user:kick', schemas.kick, (d, user) => {
-      requireModerator(user, d.channelId);
+      requireBanPower(user, d.channelId);
       const target = repo.getUser(d.userId);
       if (!target) throw new AppError('USER_NOT_FOUND', '대상 사용자를 찾을 수 없습니다.', 404);
-      if (target.id === user.id) throw new AppError('INVALID_TARGET', '자기 자신은 강퇴할 수 없습니다.', 400);
-      if (repo.canModerate(target, d.channelId)) throw new AppError('INVALID_TARGET', '채널 관리자는 강퇴할 수 없습니다.', 400);
+      const denied = repo.banDenied(user, target, d.channelId); // 서버 관리자 > 채널 관리자 > 매니저 위계
+      if (denied) throw new AppError('INVALID_TARGET', denied, 403);
       const reason = cleanText(d.reason ?? '').trim();
       const expiresAt = d.minutes ? Date.now() + d.minutes * 60_000 : null;
       const targetName = displayName(d.channelId, target);
@@ -430,6 +448,7 @@ export function initRealtime(server: Server) {
       }
       if (broadcasts.get(d.channelId)?.userId === target.id) endBroadcast(d.channelId, 'kicked');
       repo.revokeBroadcaster(d.channelId, target.id);
+      repo.revokeManager(d.channelId, target.id);
       const span = d.minutes ? `${fmtDuration(d.minutes)} 동안 ` : '';
       postSystem(d.channelId, `${targetName}님이 ${span}이용 제한과 함께 강퇴되었습니다.`);
       return { bans: repo.listBans(d.channelId) };
@@ -439,7 +458,7 @@ export function initRealtime(server: Server) {
       const target = repo.getUser(userId);
       if (!target) return;
       for (const s of socketsInRoom(channelId)) {
-        if (s.data.userId === userId) s.emit('role:update', { channelId, role: repo.roleOf(target, channelId), canBroadcast: repo.canBroadcast(target, channelId) });
+        if (s.data.userId === userId) s.emit('role:update', { channelId, role: repo.roleOf(target, channelId), canBroadcast: repo.canBroadcast(target, channelId), canBan: repo.canBan(target, channelId) });
       }
       scheduleFlush(channelId);
     };
@@ -451,8 +470,9 @@ export function initRealtime(server: Server) {
       if (repo.isBroadcaster(d.channelId, target.id)) throw new AppError('ALREADY_GRANTED', '이미 방송 권한이 있습니다.', 409);
       repo.grantBroadcaster(d.channelId, target.id);
       for (const id of repo.resolvePendingFor(d.channelId, target.id, 'granted', user.id)) emitToReviewers(d.channelId, 'request:resolved', { id });
+      pushNotification(target.id, 'broadcaster_granted', d.channelId, { channelName: channelNameOf(d.channelId) });
       notifyRole(d.channelId, target.id);
-      return { broadcasters: repo.listBroadcasters(d.channelId) };
+      return { broadcasters: withNames(d.channelId, repo.listBroadcasters(d.channelId)) };
     });
     handle(socket, 'broadcaster:revoke', schemas.target, (d, user) => {
       requireModerator(user, d.channelId);
@@ -461,8 +481,9 @@ export function initRealtime(server: Server) {
       if (!repo.revokeBroadcaster(d.channelId, target.id)) throw new AppError('NOT_GRANTED', '방송 권한이 없는 사용자입니다.', 400);
       // 방송 중이면 권한 회수와 함께 방송을 종료한다 (관리자의 명시적 조치)
       if (broadcasts.get(d.channelId)?.userId === target.id) endBroadcast(d.channelId, 'revoked');
+      pushNotification(target.id, 'broadcaster_revoked', d.channelId, { channelName: channelNameOf(d.channelId) });
       notifyRole(d.channelId, target.id);
-      return { broadcasters: repo.listBroadcasters(d.channelId) };
+      return { broadcasters: withNames(d.channelId, repo.listBroadcasters(d.channelId)) };
     });
     // ---- 방송 권한 요청 (일반 사용자 → 채널 관리자/서버 관리자) ----
     handle(socket, 'broadcast:request', schemas.channelId, (d, user) => {
@@ -481,18 +502,50 @@ export function initRealtime(server: Server) {
       requireModerator(user, req.channelId);
       repo.resolveRequest(req.id, 'dismissed', user.id);
       emitToReviewers(req.channelId, 'request:resolved', { id: req.id });
+      pushNotification(req.userId, 'request_declined', req.channelId, { channelName: req.channelName });
     });
+    // ---- 매니저 (차단/차단 해제만 가능한 채널별 역할, 임명은 채널 관리자·서버 관리자) ----
+    handle(socket, 'manager:appoint', schemas.target, (d, user) => {
+      requireModerator(user, d.channelId);
+      const target = repo.getUser(d.userId);
+      if (!target) throw new AppError('USER_NOT_FOUND', '대상 사용자를 찾을 수 없습니다.', 404);
+      if (repo.canModerate(target, d.channelId)) throw new AppError('INVALID_TARGET', '채널 관리자·서버 관리자는 매니저로 임명할 수 없습니다.', 400);
+      if (repo.isManager(d.channelId, target.id)) throw new AppError('ALREADY_MANAGER', '이미 매니저입니다.', 409);
+      repo.grantManager(d.channelId, target.id);
+      pushNotification(target.id, 'manager_appointed', d.channelId, { channelName: channelNameOf(d.channelId) });
+      notifyRole(d.channelId, target.id);
+      return { managers: withNames(d.channelId, repo.listManagers(d.channelId)) };
+    });
+    handle(socket, 'manager:revoke', schemas.target, (d, user) => {
+      requireModerator(user, d.channelId);
+      if (!repo.revokeManager(d.channelId, d.userId)) throw new AppError('NOT_MANAGER', '매니저가 아닌 사용자입니다.', 400);
+      pushNotification(d.userId, 'manager_revoked', d.channelId, { channelName: channelNameOf(d.channelId) });
+      notifyRole(d.channelId, d.userId);
+      return { managers: withNames(d.channelId, repo.listManagers(d.channelId)) };
+    });
+    handle(socket, 'manager:list', schemas.channelId, (d, user) => {
+      requireModerator(user, d.channelId);
+      return { managers: withNames(d.channelId, repo.listManagers(d.channelId)) };
+    });
+    // 내가 관리하는 채널들의 방송 권한 보유자 (알림창의 "방송 권한 관리" 탭)
+    handle(socket, 'broadcaster:overview', schemas.none, (_d, user) => ({
+      broadcasters: repo.listManagedBroadcasters(user).map((r) => ({ ...r, displayName: nameIn(r.channelId, r.userId) })),
+    }));
+    // ---- 알림 ----
+    handle(socket, 'notification:list', schemas.none, (_d, user) => ({ notifications: repo.listNotifications(user.id) }));
+    handle(socket, 'notification:read', schemas.none, (_d, user) => { repo.markNotificationsRead(user.id); });
+    handle(socket, 'notification:clear', schemas.none, (_d, user) => { repo.clearNotifications(user.id); });
     handle(socket, 'broadcaster:list', schemas.channelId, (d, user) => {
       requireModerator(user, d.channelId);
-      return { broadcasters: repo.listBroadcasters(d.channelId) };
+      return { broadcasters: withNames(d.channelId, repo.listBroadcasters(d.channelId)) };
     });
     handle(socket, 'user:unban', schemas.unban, (d, user) => {
-      requireModerator(user, d.channelId);
+      requireBanPower(user, d.channelId);
       repo.removeBan(d.channelId, d.userId);
       return { bans: repo.listBans(d.channelId) };
     });
     handle(socket, 'ban:list', schemas.channelId, (d, user) => {
-      requireModerator(user, d.channelId);
+      requireBanPower(user, d.channelId);
       return { bans: repo.listBans(d.channelId) };
     });
 
@@ -513,6 +566,12 @@ export function initRealtime(server: Server) {
       broadcasts.set(d.channelId, b);
       io.to(room(d.channelId)).emit('broadcast:started', { channelId: d.channelId, broadcaster: b.nickname, broadcasterId: b.userId, startedAt: b.startedAt, hasAudio: b.hasAudio });
       postSystem(d.channelId, `${b.nickname}님이 방송을 시작했습니다.`);
+      // 이 채널에 입장해 본 적이 있는 모든 사용자에게 알림 (차단된 사용자 제외)
+      const chName = channelNameOf(d.channelId);
+      for (const uid of repo.visitorIds(d.channelId)) {
+        if (uid === user.id || repo.getActiveBan(d.channelId, uid)) continue;
+        pushNotification(uid, 'broadcast_started', d.channelId, { channelName: chName, broadcaster: b.nickname });
+      }
       scheduleFlush(d.channelId);
     });
     // 방송 종료: 방송 중인 소켓 본인이거나 채널 관리자. 방송자는 다른 채널에 있어도 종료할 수 있다.

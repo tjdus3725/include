@@ -137,6 +137,45 @@ const MIGRATIONS: { name: string; sql: string }[] = [
     // 기본 방을 더 이상 자동 생성하지 않는다. 이미 만들어진 기본 방은 메시지·공지·이용 제한·방송 권한 요청과 함께 삭제된다(ON DELETE CASCADE).
     sql: `DELETE FROM channels WHERE is_default = 1;`,
   },
+  {
+    name: '매니저 역할, 채널 방문 기록, 알림',
+    sql: `
+    -- 한 사용자가 한 채널에서 여러 역할(예: 매니저 + 방송 권한)을 가질 수 있도록 PK 에 role 을 포함
+    CREATE TABLE channel_roles_new (
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role       TEXT NOT NULL CHECK (role IN ('owner','broadcaster','manager')),
+      granted_at INTEGER NOT NULL,
+      PRIMARY KEY (channel_id, user_id, role)
+    );
+    INSERT INTO channel_roles_new (channel_id, user_id, role, granted_at) SELECT channel_id, user_id, role, granted_at FROM channel_roles;
+    DROP TABLE channel_roles;
+    ALTER TABLE channel_roles_new RENAME TO channel_roles;
+
+    -- 입장해 본 채널 (방송 시작 알림 대상) + 마지막 입장 방식(익명 별칭 노출 방지용)
+    CREATE TABLE channel_visits (
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      first_at   INTEGER NOT NULL,
+      last_at    INTEGER NOT NULL,
+      anonymous  INTEGER NOT NULL DEFAULT 0,
+      alias      TEXT,
+      PRIMARY KEY (user_id, channel_id)
+    );
+    CREATE INDEX idx_visits_channel ON channel_visits(channel_id);
+
+    CREATE TABLE notifications (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind       TEXT NOT NULL,
+      channel_id TEXT REFERENCES channels(id) ON DELETE CASCADE,
+      data       TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      read_at    INTEGER
+    );
+    CREATE INDEX idx_notifications_user ON notifications(user_id, id);
+    `,
+  },
 ];
 
 export function migrate(): { from: number; to: number } {
