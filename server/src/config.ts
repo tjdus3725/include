@@ -49,7 +49,7 @@ export const config = {
   ipHashSecret: process.env.IP_HASH_SECRET || '',
   banByIp: bool('BAN_BY_IP', false),
   stunUrls: list('STUN_URLS'),
-  maxViewers: int('MAX_VIEWERS_PER_BROADCAST', 8, 1, 100),
+  maxViewers: int('MAX_VIEWERS_PER_BROADCAST', 20, 1, 100),
   limits: {
     nicknameMin: 2,
     nicknameMax: 12,

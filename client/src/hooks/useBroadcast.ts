@@ -22,7 +22,34 @@ export type ShareState = 'idle' | 'starting' | 'live';
 export type ViewState = 'idle' | 'connecting' | 'playing' | 'error';
 
 const CONNECT_TIMEOUT_MS = 15000;
-const MAX_BITRATE = 2_500_000; // 시청자 1명당 약 2.5Mbps 로 제한해 방송자 PC/Wi-Fi 부하를 줄임
+// 방송자가 시청자마다 영상을 따로 보내므로 업로드 총량을 예산 안에서 시청자 수로 나눈다.
+//   시청자 1~6명: 최대 2.5Mbps, 그 이상: 총 15Mbps 를 균등 분배(20명이면 750kbps), 하한 400kbps
+//   시청자가 많을수록 해상도도 낮춰 인코딩 부하를 줄인다. (화면 공유는 움직임이 적어 이 정도로도 글자가 읽히는 편)
+const PER_VIEWER_MAX_BPS = 2_500_000;
+const TOTAL_BUDGET_BPS = 15_000_000;
+const PER_VIEWER_MIN_BPS = 400_000;
+
+function tuneParams(viewers: number) {
+  const bitrate = Math.round(Math.min(PER_VIEWER_MAX_BPS, Math.max(PER_VIEWER_MIN_BPS, TOTAL_BUDGET_BPS / Math.max(1, viewers))));
+  const scale = viewers <= 4 ? 1 : viewers <= 10 ? 1.5 : 2;
+  return { bitrate, scale };
+}
+
+function retuneAll(pcs: Map<string, RTCPeerConnection>) {
+  const { bitrate, scale } = tuneParams(pcs.size);
+  for (const pc of pcs.values()) {
+    pc.getSenders().forEach((s) => {
+      if (s.track?.kind !== 'video') return;
+      try {
+        const p = s.getParameters();
+        if (!p.encodings?.length) p.encodings = [{}];
+        p.encodings[0].maxBitrate = bitrate;
+        p.encodings[0].scaleResolutionDownBy = scale;
+        void s.setParameters(p).catch(() => {});
+      } catch { /* 협상이 끝나기 전이면 다음 조정 때 적용 */ }
+    });
+  }
+}
 
 const ENDED_TEXT: Record<string, string> = {
   stopped: '방송이 종료되었습니다.',
@@ -80,6 +107,7 @@ export function useBroadcast({ channelId, joined, epoch, live, canBroadcast, ice
     senders.current.delete(viewerId);
     senderQueue.current.delete(viewerId);
     setViewerCount(senders.current.size);
+    retuneAll(senders.current); // 시청자가 줄면 남은 시청자의 화질을 다시 높인다
   }, []);
 
   const cleanupLocal = useCallback(() => {
@@ -272,16 +300,8 @@ export function useBroadcast({ channelId, joined, epoch, live, canBroadcast, ice
           await pc.setRemoteDescription({ type: 'answer', sdp: data.sdp }).catch(() => {});
           for (const c of senderQueue.current.get(from) ?? []) await pc.addIceCandidate(c).catch(() => {});
           senderQueue.current.delete(from);
-          // 시청자 1명당 비트레이트 상한
-          pc.getSenders().forEach((s) => {
-            if (s.track?.kind !== 'video') return;
-            try {
-              const p = s.getParameters();
-              if (!p.encodings?.length) p.encodings = [{}];
-              p.encodings[0].maxBitrate = MAX_BITRATE;
-              void s.setParameters(p).catch(() => {});
-            } catch { /* 무시 */ }
-          });
+          // 시청자 수에 맞춰 화질 상한 조정 (이 연결 + 이미 연결된 다른 시청자 모두)
+          retuneAll(senders.current);
         } else if (data.type === 'candidate') {
           if (pc.remoteDescription) await pc.addIceCandidate(data.candidate).catch(() => {});
           else senderQueue.current.set(from, [...(senderQueue.current.get(from) ?? []), data.candidate]);
