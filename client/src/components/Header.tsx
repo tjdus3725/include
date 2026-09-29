@@ -21,7 +21,7 @@ export function Header({ user, config, conn, query, onQuery, onToggleMenu, menuO
       </button>
       {/* 제공된 로고 이미지는 수정 없이 그대로 사용 */}
       <a href="/" className="shrink-0 rounded-md focus-visible:outline-2 focus-visible:outline-mint-400" aria-label="InChat 홈">
-        <img src="/logo.webp" alt="InChat" className="h-10 w-auto rounded-md lg:h-14" />
+        <img src="/logo.webp" alt="InChat" className="h-10 w-auto lg:h-14" />
       </a>
       <div className="relative mx-auto hidden w-full max-w-md md:block">
         <Icon name="search" size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mist-500" />

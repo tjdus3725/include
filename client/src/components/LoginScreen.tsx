@@ -31,7 +31,7 @@ export function LoginScreen({ config, onLogin, bootError, onRetry }: {
     <main className="flex min-h-dvh items-center justify-center px-4 py-8">
       <div className="w-full max-w-md">
         {/* 제공된 로고 이미지는 수정 없이 그대로 사용 */}
-        <img src="/logo.webp" alt="InChat" className="mx-auto mb-6 w-full max-w-xs rounded-2xl border border-ink-600" />
+        <img src="/logo.webp" alt="InChat" className="mx-auto mb-4 w-full max-w-xs" />
         <div className="card p-6 shadow-xl shadow-black/30">
           <h1 className="text-xl font-bold">우리 안에서 연결되는 대화</h1>
           <p className="mt-1.5 text-sm leading-relaxed text-mist-400">
