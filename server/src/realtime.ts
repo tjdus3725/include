@@ -57,7 +57,7 @@ export function displayName(channelId: string, user: repo.UserRow): string {
 }
 const isAnon = (channelId: string, userId: string) => !!identities.get(idKey(channelId, userId))?.anonymous;
 
-/** 채널의 방송 요청을 검토할 수 있는 접속자(채널 소유자, 서버 관리자)에게만 이벤트를 보낸다 */
+/** 방송 요청을 검토할 수 있는 접속자(그 채널의 개설자, 서버 관리자)에게만 이벤트를 보낸다 */
 function emitToReviewers(channelId: string, event: string, payload: unknown) {
   for (const s of io.sockets.sockets.values()) {
     const u = repo.getUser((s as S).data.userId);
@@ -91,7 +91,7 @@ function socketsInRoom(channelId: string): S[] {
   const ids = io.sockets.adapter.rooms.get(room(channelId));
   return [...(ids ?? [])].map((id) => io.sockets.sockets.get(id) as S | undefined).filter((s): s is S => !!s);
 }
-function participantsOf(channelId: string) {
+function participantsOf(channelId: string, viewerIsModerator = false) {
   const m = presence.get(channelId);
   if (!m) return [];
   const ownerId = repo.getOwnerId(channelId);
@@ -104,7 +104,8 @@ function participantsOf(channelId: string) {
       id: u.id,
       nickname: displayName(channelId, u),
       color: isAnon(channelId, u.id) ? repo.ANON_COLOR : u.color,
-      role: u.id === ownerId ? 'owner' : u.is_admin ? 'admin' : repo.isBroadcaster(channelId, u.id) ? 'broadcaster' : 'member',
+      // '방송 권한 보유자' 정보는 채널 관리자(개설자·서버 관리자)에게만 내려간다 (일반 사용자에게는 일반 참여자로 보임)
+      role: u.id === ownerId ? 'owner' : u.is_admin ? 'admin' : viewerIsModerator && repo.isBroadcaster(channelId, u.id) ? 'broadcaster' : 'member',
       broadcasting: b?.userId === u.id,
     });
   }
@@ -123,7 +124,16 @@ function scheduleFlush(channelId: string) {
     dirty.clear();
     const stats = ids.map((id) => ({ id, onlineCount: onlineCount(id), ...liveInfo(id) }));
     io.to(LOBBY).emit('channels:stats', { stats });
-    for (const id of ids) io.to(room(id)).emit('presence:update', { channelId: id, participants: participantsOf(id) });
+    // 받는 사람마다 볼 수 있는 정보가 다르므로(방송 권한 표시) 소켓별로 보낸다
+    for (const id of ids) {
+      const plain = participantsOf(id, false);
+      const full = participantsOf(id, true);
+      for (const sk of socketsInRoom(id)) {
+        const viewer = repo.getUser(sk.data.userId);
+        const mod = !!viewer && repo.canModerate(viewer, id);
+        sk.emit('presence:update', { channelId: id, participants: mod ? full : plain });
+      }
+    }
   }, 150);
 }
 
@@ -317,7 +327,9 @@ export function initRealtime(server: Server) {
         }
       }
       // 이 입장에서 사용할 신원(내 닉네임 / 익명 별칭). 같은 사용자의 다른 탭도 같은 신원을 쓴다.
-      identities.set(idKey(ch.id, user.id), { anonymous: !!d.anonymous, alias: makeAlias(ch.id, user.id) });
+      // 채널을 개설한 관리자는 익명으로 입장할 수 없다 (항상 본인 닉네임)
+      const anonymous = !!d.anonymous && !repo.isOwner(ch.id, user.id);
+      identities.set(idKey(ch.id, user.id), { anonymous, alias: makeAlias(ch.id, user.id) });
       joinChannel(socket, user, ch.id);
       let messages: repo.MessageDTO[];
       let hasMore = false;
@@ -336,7 +348,7 @@ export function initRealtime(server: Server) {
         hasMore,
         reset,
         notice: repo.getNotice(ch.id),
-        participants: participantsOf(ch.id),
+        participants: participantsOf(ch.id, mod),
         broadcast: broadcastSummary(ch.id, socket),
       };
     });
@@ -439,7 +451,6 @@ export function initRealtime(server: Server) {
       if (repo.isBroadcaster(d.channelId, target.id)) throw new AppError('ALREADY_GRANTED', '이미 방송 권한이 있습니다.', 409);
       repo.grantBroadcaster(d.channelId, target.id);
       for (const id of repo.resolvePendingFor(d.channelId, target.id, 'granted', user.id)) emitToReviewers(d.channelId, 'request:resolved', { id });
-      postSystem(d.channelId, `${displayName(d.channelId, target)}님에게 방송 권한이 부여되었습니다.`);
       notifyRole(d.channelId, target.id);
       return { broadcasters: repo.listBroadcasters(d.channelId) };
     });
@@ -450,7 +461,6 @@ export function initRealtime(server: Server) {
       if (!repo.revokeBroadcaster(d.channelId, target.id)) throw new AppError('NOT_GRANTED', '방송 권한이 없는 사용자입니다.', 400);
       // 방송 중이면 권한 회수와 함께 방송을 종료한다 (관리자의 명시적 조치)
       if (broadcasts.get(d.channelId)?.userId === target.id) endBroadcast(d.channelId, 'revoked');
-      else postSystem(d.channelId, `${displayName(d.channelId, target)}님의 방송 권한이 회수되었습니다.`);
       notifyRole(d.channelId, target.id);
       return { broadcasters: repo.listBroadcasters(d.channelId) };
     });

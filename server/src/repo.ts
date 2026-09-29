@@ -363,7 +363,7 @@ export function getRequest(id: number): (RequestDTO & { status: string }) | unde
   const r = db.prepare(`${REQ_SELECT} WHERE r.id = ?`).get(id) as ReqRow | undefined;
   return r && { ...reqDTO(r), status: r.status };
 }
-/** 검토 권한이 있는 요청 목록: 서버 관리자는 전부, 채널 소유자는 자기 채널의 요청 (오래된 순이 아닌 최신순) */
+/** 검토 권한이 있는 요청 목록: 서버 관리자는 전부, 채널 개설자는 자기 채널의 요청 (최신순) */
 export function listRequestsFor(user: UserRow): RequestDTO[] {
   const rows = user.is_admin === 1
     ? (db.prepare(`${REQ_SELECT} WHERE r.status = 'pending' ORDER BY r.created_at DESC LIMIT 100`).all() as ReqRow[])

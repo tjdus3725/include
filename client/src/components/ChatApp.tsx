@@ -40,6 +40,10 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const [query, setQuery] = useState('');
   const { channels, loading, error: chError, refresh } = useChannels(conn, query);
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
+  const userIdRef = useRef(user.id);
+  userIdRef.current = user.id;
   // 입장 방식(내 닉네임/익명)은 방마다 고른 값을 이 탭에서 기억한다. 아직 고르지 않은 방은 입장 전에 반드시 묻는다.
   const [identities, setIdentities] = useState<Record<string, EntryMode>>(readIdentities);
   const [activeId, setActiveId] = useState<string | null>(() => { const h = parseHash(); return h && readIdentities()[h] ? h : null; });
@@ -62,10 +66,12 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   }, []);
   /** 방을 고르면 입장 방식(내 닉네임/익명)을 먼저 묻는다 */
   const select = useCallback((id: string) => {
-    setEntryFor(id);
     setMenuOpen(false);
     setInfoOpen(false);
-  }, []);
+    // 채널을 개설한 관리자는 익명으로 입장할 수 없다: 묻지 않고 본인 닉네임으로 바로 입장
+    if (channelsRef.current.find((c) => c.id === id)?.ownerId === userIdRef.current) { enter(id, 'nick'); return; }
+    setEntryFor(id);
+  }, [enter]);
   /** 채널 퇴장: 서버에 퇴장을 알리고(useChat 정리 단계) 로비로 돌아간다 */
   const leave = useCallback(() => {
     setActiveId(null);
@@ -90,7 +96,11 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
     return () => window.removeEventListener('hashchange', on);
   }, [enter]);
 
-  const anonymous = !!activeId && identities[activeId] === 'anon';
+  const ownsActive = !!activeId && channels.find((c) => c.id === activeId)?.ownerId === user.id;
+  const anonymous = !!activeId && identities[activeId] === 'anon' && !ownsActive;
+  useEffect(() => {
+    if (entryFor && channels.find((c) => c.id === entryFor)?.ownerId === user.id) enter(entryFor, 'nick');
+  }, [entryFor, channels, user.id, enter]);
   const chat = useChat(activeId, conn, config.limits.messageMax, user.isAdmin, anonymous);
   const { state } = chat;
   const canModerate = !!state.me?.canModerate;
@@ -101,14 +111,14 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   });
   const canReview = user.isAdmin || channels.some((c) => c.ownerId === user.id);
   const reqs = useRequests(conn, canReview);
-  // 방송 권한을 새로 받으면 알려준다
-  const prevCan = useRef(false);
+  // 방송 권한을 새로 받으면 본인에게만 알려준다 (다른 참여자에게는 공개되지 않는다)
+  const prevCan = useRef<boolean | null>(null);
+  useEffect(() => { prevCan.current = null; }, [activeId]);
   useEffect(() => {
-    if (state.status === 'joined') {
-      if (canBroadcast && !prevCan.current && state.epoch > 1) toast('방송 권한이 부여되었습니다. 이제 이 채널에서 방송을 시작할 수 있어요.', 'success');
-      prevCan.current = canBroadcast;
-    }
-  }, [canBroadcast, state.status, state.epoch, toast]);
+    if (state.status !== 'joined') return;
+    if (prevCan.current === false && canBroadcast) toast('방송 권한이 부여되었습니다. 이제 이 채널에서 방송을 시작할 수 있어요.', 'success');
+    prevCan.current = canBroadcast;
+  }, [canBroadcast, state.status, toast]);
   const live = state.broadcast.live || bc.isSharingHere;
   const sharingElsewhere = bc.isSharing && !bc.isSharingHere;
   const shareChannel = channels.find((c) => c.id === bc.shareChannelId) ?? null;

@@ -141,7 +141,7 @@ async function newUser(nick, { base = HTTP, channel = 'all', viewport = { width:
   contexts.push(ctx);
   return { ctx, page, nick, net };
 }
-const confirmEntry = async (p) => { await p.getByRole('dialog').getByRole('button', { name: '입장하기' }).click(); }; // 입장 방식(내 닉네임) 팝업 확인
+const confirmEntry = async (p) => { await p.getByRole('dialog').getByRole('button', { name: '입장하기' }).click({ timeout: 2500 }).catch(() => {}); }; // 채널 개설자는 팝업 없이 입장하므로 없어도 통과 // 입장 방식(내 닉네임) 팝업 확인
 const composer = (p) => p.locator('textarea[aria-label="메시지 입력"]');
 const ready = async (p) => {
   await p.waitForFunction(() => { const t = document.querySelector('textarea[aria-label="메시지 입력"]'); return t && !t.placeholder.startsWith('연결'); }, null, { timeout: 15000 });
@@ -490,6 +490,53 @@ await test('비관리자의 관리 기능 호출 차단 (소켓 11종 + REST 채
   assert(hist.notice?.body === '정식 공지입니다', '공지가 조회되지 않음');
   owner.close(); other.close();
   return '차단 확인 + 소유자만 성공, 삭제 메시지 본문은 서버가 전송하지 않음';
+});
+
+await test('개설자 익명 입장 불가 · 방송 권한 정보는 관리자에게만 · 개설자는 요청 없이 방송', async () => {
+  const third = await apiLogin('일반참여자');
+  const otherMe = (await api(otherCookie, 'GET', '/api/me')).body.user;
+  const owner = await rawSocket(ownerCookie);
+  const other = await rawSocket(otherCookie);
+  const guest = await rawSocket(third.cookie);
+  let ownerView = [], guestView = [];
+  owner.on('presence:update', (d) => { if (d.channelId === chId) ownerView = d.participants; });
+  guest.on('presence:update', (d) => { if (d.channelId === chId) guestView = d.participants; });
+  // 1) 개설자가 anonymous:true 로 입장해도 서버가 무시하고 본인 닉네임으로 입장시킨다
+  const j = await emit(owner, 'channel:join', { channelId: chId, anonymous: true });
+  const me = j.participants.find((u) => u.id === ownerUser.id);
+  assert(me && me.nickname === '방장님' && me.role === 'owner', `개설자가 익명으로 입장됨: ${JSON.stringify(me)}`);
+  await emit(other, 'channel:join', { channelId: chId });
+  await emit(guest, 'channel:join', { channelId: chId });
+  // 2) 개설자(관리자)는 요청 없이 바로 방송할 수 있다
+  assert((await emit(owner, 'broadcast:start', { channelId: chId, hasAudio: false })).ok, '개설자가 요청 없이 방송하지 못함');
+  assert((await emit(owner, 'broadcast:stop', { channelId: chId })).ok, '방송 종료 실패');
+  // 3) 개설자는 방송 권한을 부여/조회/회수할 수 있고, 일반 참여자는 볼 수도 바꿀 수도 없다
+  const granted = await emit(owner, 'broadcaster:grant', { channelId: chId, userId: otherMe.id });
+  assert(granted.ok && granted.broadcasters.some((b) => b.userId === otherMe.id), `개설자의 권한 부여 실패 ${JSON.stringify(granted)}`);
+  await sleep(500);
+  assert(ownerView.find((u) => u.id === otherMe.id)?.role === 'broadcaster', '개설자에게 방송 권한 보유자가 표시되지 않음');
+  assert(guestView.find((u) => u.id === otherMe.id)?.role === 'member', `일반 참여자에게 방송 권한 보유자가 노출됨: ${JSON.stringify(guestView.find((u) => u.id === otherMe.id))}`);
+  for (const [ev, data] of [['broadcaster:list', { channelId: chId }], ['broadcaster:grant', { channelId: chId, userId: otherMe.id }], ['broadcaster:revoke', { channelId: chId, userId: otherMe.id }]]) {
+    assert((await emit(guest, ev, data)).error?.code === 'FORBIDDEN', `일반 참여자의 ${ev} 가 차단되지 않음`);
+  }
+  assert((await emit(owner, 'broadcaster:revoke', { channelId: chId, userId: otherMe.id })).ok, '개설자의 권한 회수 실패');
+  // 4) 시스템 메시지로도 보유자가 드러나지 않는다
+  const hist = await emit(guest, 'channel:join', { channelId: chId });
+  assert(!hist.messages.some((m) => m.kind === 'system' && m.body.includes('방송 권한')), '채팅에 방송 권한 부여/회수 메시지가 공개됨');
+  owner.close(); other.close(); guest.close();
+  return '개설자 익명 입장 무시, 요청 없이 방송, 보유자 표시는 관리자에게만, 일반 참여자의 조회·부여·회수 차단';
+});
+
+await test('개설자는 입장 방식 팝업 없이 본인 닉네임으로 바로 입장 (화면)', async () => {
+  const O = await newUser('화면개설자', { channel: 'all' });
+  await createChannelUI(O.page, '개설자 전용방');
+  await O.page.getByRole('button', { name: '채널 나가기' }).click();
+  await O.page.getByRole('heading', { name: '방송 로비' }).waitFor();
+  await O.page.getByRole('button', { name: /개설자 전용방/ }).first().click();
+  await ready(O.page); // 팝업이 떴다면 여기서 막힌다
+  assert((await O.page.getByRole('dialog').count()) === 0, '개설자에게 입장 방식 팝업이 표시됨');
+  const txt = await O.page.locator('body').innerText();
+  assert(txt.includes('화면개설자') && !/익명\d{4}/.test(txt), '개설자가 익명으로 표시됨');
 });
 
 await test('인증·Origin·입력 보안 (세션 없음/위조/외부 Origin/SQL 주입/로그 민감정보)', async () => {

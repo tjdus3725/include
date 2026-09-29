@@ -47,7 +47,7 @@ Ban      { userId, nickname, reason, createdAt, expiresAt|null }
 
 연결: `io()` (같은 Origin, 경로 `/socket.io`). 세션이 없으면 `connect_error` 의 `message === 'AUTH_REQUIRED'`.
 연결되면 자동으로 `lobby` 룸에 참가해 채널 목록 갱신 이벤트를 받습니다. 채널 룸(`ch:<id>`)에는 `channel:join` 으로 참가하며, **한 소켓은 한 번에 한 채널**에만 있습니다.
-**익명 입장**: `channel:join` 에 `anonymous: true` 를 주면 그 채널에서는 서버가 정한 별칭(`익명1234`, 같은 사용자·같은 채널이면 항상 동일)으로만 표시됩니다.
+**익명 입장**: `channel:join` 에 `anonymous: true` 를 주면(채널 개설자는 서버가 무시하고 항상 본인 닉네임으로 입장시킴) 그 채널에서는 서버가 정한 별칭(`익명1234`, 같은 사용자·같은 채널이면 항상 동일)으로만 표시됩니다.
 메시지의 `nickname`·`color`, 참여자 목록, 입퇴장/강퇴/권한 시스템 메시지, 이전 메시지 조회(`GET …/messages`)와 방송 시청자 이름 모두 별칭이 나가며 실제 닉네임은 전달되지 않습니다.
 메시지에 `anonymous: true` 가 붙습니다. 강퇴·권한 부여 같은 관리 작업은 `userId` 로 이루어집니다.
 접속 인원은 채널별 **고유 사용자 수**입니다(같은 사용자의 여러 탭은 1명, 연결이 끊기면 즉시 감소).
