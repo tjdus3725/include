@@ -95,6 +95,7 @@ const rawSocket = (cookie, origin) => new Promise((resolve, reject) => {
   s.once('connect_error', (e) => reject(e));
 });
 const emit = (s, ev, data) => new Promise((res) => s.timeout(6000).emit(ev, data, (e, r) => res(e ? { ok: false, error: { code: 'TIMEOUT' } } : r)));
+const code = (r) => (r.ok ? 'ok' : r.error.code);
 const api = async (cookie, method, p, body) => {
   const r = await fetch(`${HTTP}${p}`, { method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined });
   return { status: r.status, body: await r.json().catch(() => null) };
@@ -524,7 +525,7 @@ await test('개설자 익명 입장 불가 · 방송 권한 정보는 관리자�
   for (const [ev, data] of [['broadcaster:list', { channelId: chId }], ['broadcaster:grant', { channelId: chId, userId: otherMe.id }], ['broadcaster:revoke', { channelId: chId, userId: otherMe.id }]]) {
     assert((await emit(guest, ev, data)).error?.code === 'FORBIDDEN', `일반 참여자의 ${ev} 가 차단되지 않음`);
   }
-  assert((await emit(owner, 'broadcaster:revoke', { channelId: chId, userId: otherMe.id })).ok, '개설자의 권한 회수 실패');
+  assert(code(await emit(owner, 'broadcaster:revoke', { channelId: chId, userId: otherMe.id })) === 'FORBIDDEN', '개설자가 방송 권한을 회수할 수 있음(서버 관리자만 가능해야 함)');
   // 4) 시스템 메시지로도 보유자가 드러나지 않는다
   const hist = await emit(guest, 'channel:join', { channelId: chId });
   assert(!hist.messages.some((m) => m.kind === 'system' && m.body.includes('방송 권한')), '채팅에 방송 권한 부여/회수 메시지가 공개됨');
@@ -672,10 +673,10 @@ await test('알림: 입장해 본 채널의 방송 시작(과거 방문자 포�
   assert((await emit(P.sock, 'broadcast:request', { channelId: cid })).ok, '방송 요청 실패');
   const req = (await emit(O.sock, 'request:list', {})).requests[0];
   assert((await emit(O.sock, 'request:dismiss', { requestId: req.id })).ok, '요청 거절 실패');
-  assert((await emit(O.sock, 'broadcaster:grant', { channelId: cid, userId: P.user.id })).ok && (await emit(O.sock, 'broadcaster:revoke', { channelId: cid, userId: P.user.id })).ok, '부여/회수 실패');
+  assert((await emit(O.sock, 'broadcaster:grant', { channelId: cid, userId: P.user.id })).ok && code(await emit(O.sock, 'broadcaster:revoke', { channelId: cid, userId: P.user.id })) === 'FORBIDDEN', '부여 실패 또는 개설자의 회수가 허용됨');
   await sleep(400);
   const kinds = P.notes.map((n) => n.kind);
-  assert(kinds.includes('request_declined') && kinds.includes('broadcaster_granted') && kinds.includes('broadcaster_revoked'), `요청자 알림 누락: ${kinds}`);
+  assert(kinds.includes('request_declined') && kinds.includes('broadcaster_granted'), `요청자 알림 누락: ${kinds}`);
   // 차단된 사용자에게는 방송 시작 알림을 보내지 않는다
   assert((await emit(O.sock, 'broadcast:stop', { channelId: cid })).ok, '방송 종료 실패');
   await emit(O.sock, 'user:kick', { channelId: cid, userId: V.user.id, minutes: 10 });
@@ -1026,8 +1027,21 @@ await test('방송 권한 부여·회수 (⋮ 메뉴): 부여 → 방송 가능 
   await O.page.locator('video').first().waitFor({ timeout: 10000 });
   await O.page.waitForFunction(() => document.querySelector('video')?.videoWidth > 0, null, { timeout: 25000 });
   // 회수: 방송 중이면 방송도 종료
+  // 채널 개설자에게는 회수 메뉴가 없고, 보유자 목록의 회수 버튼은 비활성화
   await O.page.getByRole('button', { name: '권한대상 관리 메뉴' }).first().click();
-  await O.page.getByRole('menuitem', { name: /방송 권한 회수/ }).click();
+  assert((await O.page.getByRole('menuitem').allInnerTexts()).every((t) => !t.includes('방송 권한 회수')), '채널 개설자에게 회수 메뉴가 보임');
+  await O.page.keyboard.press('Escape');
+  assert(await O.page.getByRole('button', { name: '회수', exact: true }).first().isDisabled(), '개설자 화면의 회수 버튼이 활성화됨');
+  // 서버 관리자만 회수 (소켓)
+  const AD = await apiLogin('회수관리자');
+  await api(AD.cookie, 'POST', '/api/admin/claim', { code: ADMIN_CODE });
+  const adSock = await rawSocket(AD.cookie);
+  const chs = (await api(AD.cookie, 'GET', '/api/channels')).body.channels;
+  const cid2 = chs.find((c) => c.name === '권한 채널').id;
+  await emit(adSock, 'channel:join', { channelId: cid2 });
+  const tid = (await api(await T.page.context().cookies().then((c) => c.map((x) => `${x.name}=${x.value}`).join('; ')), 'GET', '/api/me')).body.user.id;
+  assert((await emit(adSock, 'broadcaster:revoke', { channelId: cid2, userId: tid })).ok, '서버 관리자의 회수 실패');
+  adSock.close();
   await T.page.getByText('방송 권한이 회수되어 방송이 종료되었습니다.').first().waitFor({ timeout: 8000 });
   await O.page.locator('video').waitFor({ state: 'detached', timeout: 8000 });
   await T.page.getByRole('button', { name: '방송 시작', exact: true }).click();

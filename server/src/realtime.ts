@@ -489,7 +489,8 @@ export function initRealtime(server: Server) {
       return { broadcasters: withNames(d.channelId, repo.listBroadcasters(d.channelId)) };
     });
     handle(socket, 'broadcaster:revoke', schemas.target, (d, user) => {
-      requireModerator(user, d.channelId);
+      // 회수는 서버 관리자만 가능 (채널 관리자는 부여만 가능)
+      if (user.is_admin !== 1) throw new AppError('FORBIDDEN', '방송 권한 회수는 서버 관리자만 할 수 있습니다.', 403);
       const target = repo.getUser(d.userId);
       if (!target) throw new AppError('USER_NOT_FOUND', '대상 사용자를 찾을 수 없습니다.', 404);
       if (!repo.revokeBroadcaster(d.channelId, target.id)) throw new AppError('NOT_GRANTED', '방송 권한이 없는 사용자입니다.', 400);

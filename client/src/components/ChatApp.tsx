@@ -314,7 +314,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
             onOpenChannel={(id) => select(id)}
             showManage={canReview} requests={reqs.requests} holders={notif.holders}
             onGrant={async (r) => { await reqs.grant(r); void notif.reloadHolders(); }} onDismiss={reqs.dismiss}
-            onRevokeHolder={notif.revoke} onOpenManage={() => void notif.reloadHolders()}
+            onRevokeHolder={notif.revoke} canRevoke={!!user.isAdmin} onOpenManage={() => void notif.reloadHolders()}
           />
         } />
       <ConnectionBanner conn={conn} />

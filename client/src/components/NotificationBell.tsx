@@ -38,6 +38,8 @@ interface Props {
   onDismiss: (r: BroadcastRequest) => Promise<void>;
   onRevokeHolder: (h: ManagedBroadcaster) => Promise<void>;
   onOpenManage: () => void;
+  /** 회수는 서버 관리자만 */
+  canRevoke: boolean;
 }
 
 /** 모든 사용자의 알림 아이콘. 관리자에게는 방송 권한 요청 처리(부여/거절)와 보유자 회수 탭이 추가된다. */
@@ -145,7 +147,7 @@ export function NotificationBell(p: Props) {
                 {p.holders.map((h) => (
                   <li key={`${h.channelId}:${h.userId}`} className="flex items-center gap-2 px-4 py-2">
                     <span className="min-w-0 flex-1 text-sm"><b className="block truncate">{h.displayName}</b><span className="block truncate text-xs text-mist-500">{h.channelName}</span></span>
-                    <button className="btn-secondary !py-1 text-xs" disabled={busy === `h${h.channelId}${h.userId}`}
+                    <button className="btn-secondary !py-1 text-xs" disabled={!p.canRevoke || busy === `h${h.channelId}${h.userId}`} title={p.canRevoke ? undefined : '방송 권한 회수는 서버 관리자만 할 수 있어요'}
                       onClick={() => { if (window.confirm(`${h.displayName}님의 방송 권한을 회수할까요? 방송 중이라면 방송도 종료됩니다.`)) void run(`h${h.channelId}${h.userId}`, () => p.onRevokeHolder(h), '방송 권한을 회수했습니다.'); }}>회수</button>
                   </li>
                 ))}

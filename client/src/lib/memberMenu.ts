@@ -26,9 +26,9 @@ export function buildMemberMenu(o: {
   }
   if (canModerate && targetRole && !protectedTarget) {
     if (targetRole !== 'manager') {
-      items.push(targetRole === 'broadcaster'
-        ? { label: '방송 권한 회수', icon: 'stop' as IconName, onClick: () => handlers.setBroadcaster(false) }
-        : { label: '방송 권한 부여', icon: 'radio' as IconName, onClick: () => handlers.setBroadcaster(true) });
+      // 회수는 서버 관리자만 가능
+      if (targetRole !== 'broadcaster') items.push({ label: '방송 권한 부여', icon: 'radio' as IconName, onClick: () => handlers.setBroadcaster(true) });
+      else if (actorRole === 'admin') items.push({ label: '방송 권한 회수', icon: 'stop' as IconName, onClick: () => handlers.setBroadcaster(false) });
     }
     items.push(targetRole === 'manager'
       ? { label: '매니저 권한 회수', icon: 'shield' as IconName, onClick: () => handlers.setManager(false) }

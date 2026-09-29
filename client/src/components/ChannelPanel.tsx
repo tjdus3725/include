@@ -93,7 +93,7 @@ export function ChannelPanel(p: Props) {
         {p.canBroadcast && p.shareBlocked === 'insecure' && (
           <p className="mt-2 rounded-lg bg-amber-400/10 p-2.5 text-xs leading-relaxed text-amber-400" role="note">
             (권한과 별개로) 지금 주소는 보안 연결이 아니어서 브라우저가 화면 공유를 막습니다. 서버 컴퓨터에서는 <b>localhost</b> 로, 다른 기기에서는 <b>HTTPS</b> 주소로 접속해 주세요.
-            {httpsUrl ? <> HTTPS 주소: <a className="underline" href={httpsUrl}>{httpsUrl}</a></> : ' (서버에서 npm run cert 후 HTTPS=true 설정 필요)'}
+            {httpsUrl ? <> HTTPS 주소: <a className="underline" href={httpsUrl}>{httpsUrl}</a></> : ' (서버에서 npm run cert 실행 후, .env 파일(.env.example 아님)에 HTTPS=true 를 설정하고 서버를 다시 시작하세요)'}
           </p>
         )}
         {p.canBroadcast && p.shareBlocked === 'unsupported' && (
@@ -170,7 +170,7 @@ export function ChannelPanel(p: Props) {
             {casters.map((c) => (
               <li key={c.userId} className="flex items-center gap-2 rounded-lg bg-ink-700 px-3 py-2 text-sm">
                 <span className="min-w-0 flex-1 truncate font-semibold">{c.nickname}</span>
-                <button className="btn-secondary !px-2.5 !py-1 text-xs" onClick={() => p.onSetBroadcaster(c.userId, c.nickname, false)}>회수</button>
+                <button className="btn-secondary !px-2.5 !py-1 text-xs" disabled={!p.user.isAdmin} title={p.user.isAdmin ? undefined : '방송 권한 회수는 서버 관리자만 할 수 있어요'} onClick={() => p.onSetBroadcaster(c.userId, c.nickname, false)}>회수</button>
               </li>
             ))}
             {casters.length === 0 && <li className="text-sm text-mist-500">관리자 외에 방송 권한을 가진 사용자가 없습니다. 참여자 옆 ⋮ 메뉴에서 부여할 수 있어요.</li>}
