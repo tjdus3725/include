@@ -288,6 +288,11 @@ export function disconnectSession(tokenHash: string) {
     }
   }
 }
+/** 새 채널이 만들어지면 서버 관리자(개설자 본인 제외)에게 알림 */
+export function notifyChannelCreated(channelId: string, creator: repo.UserRow) {
+  const data = { channelName: channelNameOf(channelId), creator: creator.nickname };
+  for (const id of repo.adminIds()) if (id !== creator.id) pushNotification(id, 'channel_created', channelId, data);
+}
 export function refreshUser(userId: string) {
   for (const [channelId, m] of presence) if (m.has(userId)) scheduleFlush(channelId);
 }
@@ -467,9 +472,8 @@ export function initRealtime(server: Server) {
       const target = repo.getUser(d.userId);
       if (!target) throw new AppError('USER_NOT_FOUND', '대상 사용자를 찾을 수 없습니다.', 404);
       if (repo.canModerate(target, d.channelId)) {
-        // 채널 개설자는 이미 방송할 수 있다. 개설자가 서버 관리자에게 보낸 요청이 있으면 승인 처리만 한다(역할은 추가하지 않음)
-        const pending = repo.isOwner(d.channelId, target.id) ? repo.getPendingRequest(d.channelId, target.id) : undefined;
-        if (!pending || user.is_admin !== 1) throw new AppError('INVALID_TARGET', '채널 관리자는 이미 방송할 수 있습니다.', 400);
+        // 채널 개설자는 이미 방송할 수 있다. 서버 관리자가 부여하면(요청에 대한 승인이든 직접 부여든) 알림과 요청 정리만 하고 역할 행은 추가하지 않는다
+        if (user.is_admin !== 1 || !repo.isOwner(d.channelId, target.id)) throw new AppError('INVALID_TARGET', '채널 관리자는 이미 방송할 수 있습니다.', 400);
         for (const id of repo.resolvePendingFor(d.channelId, target.id, 'granted', user.id)) emitToReviewers(d.channelId, 'request:resolved', { id }, true);
         pushNotification(target.id, 'broadcaster_granted', d.channelId, { channelName: channelNameOf(d.channelId) });
         return { broadcasters: withNames(d.channelId, repo.listBroadcasters(d.channelId)) };

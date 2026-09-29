@@ -40,8 +40,8 @@ export interface BroadcastRequest { id: number; channelId: string; channelName: 
 export type EntryMode = 'nick' | 'anon';
 
 /** 알림함 항목 (서버가 저장·전달) */
-export type NotificationKind = 'broadcast_started' | 'broadcaster_granted' | 'broadcaster_revoked' | 'request_declined' | 'manager_appointed' | 'manager_revoked';
-export interface AppNotification { id: number; kind: NotificationKind; channelId: string | null; data: { channelName?: string; broadcaster?: string }; createdAt: number; read: boolean }
+export type NotificationKind = 'channel_created' | 'broadcast_started' | 'broadcaster_granted' | 'broadcaster_revoked' | 'request_declined' | 'manager_appointed' | 'manager_revoked';
+export interface AppNotification { id: number; kind: NotificationKind; channelId: string | null; data: { channelName?: string; broadcaster?: string; creator?: string }; createdAt: number; read: boolean }
 /** 내가 관리하는 채널의 방송 권한 보유자 */
 export interface ManagedBroadcaster { channelId: string; channelName: string; userId: string; displayName: string }
 export interface Manager { userId: string; nickname: string }

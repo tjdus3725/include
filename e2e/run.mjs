@@ -58,7 +58,7 @@ const server = spawn('node', ['server/dist/index.js'], {
   env: {
     ...process.env, PORT: String(PORT), HTTPS: 'true', HTTPS_PORT: String(HPORT), DB_PATH: dbPath, CERT_DIR: certDir,
     ADMIN_CODE, LEAVE_GRACE_MS: '1500', SESSION_TTL_DAYS: '30',
-    LOGIN_RATE_PER_10MIN: '1000', // 한 IP 에서 다수 사용자를 만드는 테스트 전용 (기본값은 20회/10분)
+    LOGIN_RATE_PER_10MIN: '1000', ADMIN_CLAIM_RATE_PER_10MIN: '1000', // 한 IP 에서 다수 사용자·관리자를 만드는 테스트 전용 (기본값은 20회/5회, 10분)
   },
 });
 server.stdout.on('data', (d) => serverLog.push(d.toString()));
@@ -606,6 +606,34 @@ await test('채널 관리자의 방송 요청: 서버 관리자에게만 전달�
   assert((await emit(O.sock, 'broadcast:start', { channelId: cid, hasAudio: false })).ok, '개설자가 방송하지 못함');
   await emit(O.sock, 'broadcast:stop', { channelId: cid });
   for (const x of [A, O, U, H]) x.sock.close();
+});
+
+await test('서버 관리자: 새 채널 개설 알림, 채널 관리자에게 직접 방송 권한 부여', async () => {
+  const mk = async (n) => { const l = await apiLogin(n); return { ...l, sock: await rawSocket(l.cookie), notes: [] }; };
+  const A = await mk('개설알림관리자'), A2 = await mk('개설알림관리자2'), O = await mk('개설알림개설자'), U = await mk('개설알림일반');
+  for (const x of [A, A2]) await api(x.cookie, 'POST', '/api/admin/claim', { code: ADMIN_CODE });
+  for (const x of [A, A2, O, U]) x.sock.on('notification:new', (d) => x.notes.push(d.notification));
+  const created = (await api(O.cookie, 'POST', '/api/channels', { name: '개설알림 검증방' })).body.channel;
+  await sleep(400);
+  const isNew = (x) => x.notes.filter((n) => n.kind === 'channel_created' && n.channelId === created.id);
+  assert(isNew(A).length === 1 && isNew(A2).length === 1, `서버 관리자가 새 채널 알림을 받지 못함 (${isNew(A).length}, ${isNew(A2).length})`);
+  assert(isNew(A)[0].data.channelName === '개설알림 검증방' && isNew(A)[0].data.creator === '개설알림개설자', `알림 내용 이상: ${JSON.stringify(isNew(A)[0].data)}`);
+  assert(isNew(O).length === 0 && isNew(U).length === 0, '개설자 또는 일반 사용자가 새 채널 알림을 받음');
+  assert((await emit(A.sock, 'notification:list', {})).notifications.some((n) => n.kind === 'channel_created'), '새 채널 알림이 저장되지 않음(나중에 접속하면 안 보임)');
+  // 서버 관리자가 자기 채널을 만들면 본인에게는 알림이 없고, 다른 서버 관리자에게만 간다
+  const before = isNew(A2).length;
+  const mine = (await api(A.cookie, 'POST', '/api/channels', { name: '관리자가만든방' })).body.channel;
+  await sleep(300);
+  assert(A.notes.filter((n) => n.channelId === mine.id).length === 0 && A2.notes.filter((n) => n.channelId === mine.id).length === 1, '서버 관리자끼리의 새 채널 알림이 이상함');
+  assert(before === 1, 'ok');
+  // 서버 관리자가 채널 관리자에게 직접 방송 권한 부여
+  for (const x of [A, O, U]) await emit(x.sock, 'channel:join', { channelId: created.id });
+  assert((await emit(A.sock, 'broadcaster:grant', { channelId: created.id, userId: O.user.id })).ok, '서버 관리자의 개설자 직접 부여 실패');
+  await sleep(300);
+  assert(O.notes.some((n) => n.kind === 'broadcaster_granted'), '개설자에게 부여 알림이 없음');
+  assert((await emit(U.sock, 'broadcaster:grant', { channelId: created.id, userId: O.user.id })).error?.code === 'FORBIDDEN', '일반 사용자가 개설자에게 부여');
+  assert((await emit(O.sock, 'broadcaster:grant', { channelId: created.id, userId: A.user.id })).error?.code === 'INVALID_TARGET', '개설자가 서버 관리자에게 부여');
+  for (const x of [A, A2, O, U]) x.sock.close();
 });
 
 await test('알림: 입장해 본 채널의 방송 시작(과거 방문자 포함)·요청 거절·권한 변경 알림, 저장·읽음', async () => {

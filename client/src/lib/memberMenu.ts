@@ -20,6 +20,10 @@ export function buildMemberMenu(o: {
   const { actorRole, canModerate, canBan, targetRole, handlers } = o;
   const items: MenuItem[] = [];
   const protectedTarget = targetRole === 'admin' || targetRole === 'owner';
+  // 서버 관리자는 채널 관리자(개설자)에게도 방송 권한을 부여할 수 있다 (개설자는 원래 방송 가능하므로 알림·기록용)
+  if (actorRole === 'admin' && targetRole === 'owner') {
+    items.push({ label: '방송 권한 부여', icon: 'radio' as IconName, onClick: () => handlers.setBroadcaster(true) });
+  }
   if (canModerate && targetRole && !protectedTarget) {
     if (targetRole !== 'manager') {
       items.push(targetRole === 'broadcaster'

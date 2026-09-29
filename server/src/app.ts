@@ -11,7 +11,7 @@ import {
   attachAuth, clearSessionCookie, issueSession, originGuard, requireAuth, safeEqual, setSessionCookie,
 } from './auth.js';
 import { PROFILE_COLORS, parse, schemas, validateChannelDescription, validateChannelName, validateNickname } from './validation.js';
-import { channelDTO, destroyChannelRuntime, disconnectSession, notifyChannelsChanged, refreshUser, totalOnlineUsers } from './realtime.js';
+import { channelDTO, destroyChannelRuntime, disconnectSession, notifyChannelCreated, notifyChannelsChanged, refreshUser, totalOnlineUsers } from './realtime.js';
 
 const userDTO = (u: repo.UserRow) => ({ id: u.id, nickname: u.nickname, color: u.color, isAdmin: !!u.is_admin, createdAt: u.created_at });
 
@@ -61,7 +61,7 @@ export function createApp() {
   });
   const claimLimiter = rateLimit({
     windowMs: 10 * 60_000,
-    limit: 5,
+    limit: config.rate.adminClaimPerTenMinutes,
     standardHeaders: true,
     legacyHeaders: false,
     handler: (_req, res) => res.status(429).json({ error: { code: 'RATE_LIMITED', message: '관리자 인증 시도가 너무 많습니다. 10분 뒤 다시 시도해 주세요.' } }),
@@ -141,6 +141,7 @@ export function createApp() {
     const d = parse(schemas.createChannel, req.body);
     const id = repo.createChannel(validateChannelName(d.name), validateChannelDescription(d.description), req.auth!.user.id);
     notifyChannelsChanged();
+    notifyChannelCreated(id, req.auth!.user);
     res.status(201).json({ channel: channelDTO(repo.getChannel(id)!) });
   });
   api.get('/channels/:id', requireAuth, (req, res) => {

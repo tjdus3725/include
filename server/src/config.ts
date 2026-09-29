@@ -66,6 +66,7 @@ export const config = {
   rate: {
     httpPerMinute: int('HTTP_RATE_PER_MINUTE', 300, 10, 100000),
     loginPerTenMinutes: int('LOGIN_RATE_PER_10MIN', 20, 1, 1000),
+    adminClaimPerTenMinutes: int('ADMIN_CLAIM_RATE_PER_10MIN', 5, 1, 1000),
     msgBurst: int('MSG_BURST', 5, 1, 100),
     msgRefillMs: int('MSG_REFILL_MS', 1000, 50, 60000),
     msgMinGapMs: int('MSG_MIN_GAP_MS', 300, 0, 10000),

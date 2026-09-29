@@ -13,6 +13,7 @@ function when(ts: number): string {
 function describe(n: AppNotification): { text: React.ReactNode; canOpen: boolean } {
   const ch = <b>{n.data.channelName ?? '채널'}</b>;
   switch (n.kind) {
+    case 'channel_created': return { text: <>새 채널 {ch}이(가) 개설되었어요.{n.data.creator ? <> ({n.data.creator}님)</> : null}</>, canOpen: true };
     case 'broadcast_started': return { text: <>{ch} 채널에서 방송이 시작되었어요.{n.data.broadcaster ? <> ({n.data.broadcaster}님)</> : null}</>, canOpen: true };
     case 'broadcaster_granted': return { text: <>{ch} 채널에서 <b>방송 권한</b>이 부여되었어요. 이제 방송을 시작할 수 있어요.</>, canOpen: true };
     case 'broadcaster_revoked': return { text: <>{ch} 채널의 방송 권한이 회수되었어요.</>, canOpen: false };
@@ -108,7 +109,7 @@ export function NotificationBell(p: Props) {
                       <p className="text-sm leading-snug">{d.text}</p>
                       <div className="mt-1 flex items-center gap-3">
                         <span className="text-xs text-mist-500">{when(n.createdAt)}</span>
-                        {d.canOpen && n.channelId && <button className="text-xs font-semibold text-mint-300 hover:underline" onClick={() => { setOpen(false); p.onOpenChannel(n.channelId!); }}>채널로 이동</button>}
+                        {d.canOpen && n.channelId && <button className="text-xs font-semibold text-mint-300 hover:underline" onClick={() => { close(); p.onOpenChannel(n.channelId!); }}>채널로 이동</button>}
                       </div>
                     </li>
                   );

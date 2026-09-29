@@ -101,7 +101,7 @@ Ban      { userId, nickname, reason, createdAt, expiresAt|null }
 | `request:new` | 검토 권한이 있는 접속자(서버 관리자, 채널 소유자) | `{ request: BroadcastRequest }` |
 | `request:resolved` | 검토 권한이 있는 접속자 | `{ id }` (부여·무시·회수로 처리됨) |
 | `role:update` | 대상 사용자의 소켓(채널 룸) | `{ channelId, role, canBroadcast, canBan }` |
-| `notification:new` | 대상 사용자의 모든 탭 | `{ notification }` (`kind`: `broadcast_started`·`broadcaster_granted`·`broadcaster_revoked`·`request_declined`·`manager_appointed`·`manager_revoked`) |
+| `notification:new` | 대상 사용자의 모든 탭 | `{ notification }` (`kind`: `channel_created`(서버 관리자에게, 새 채널 개설)·`broadcast_started`·`broadcaster_granted`·`broadcaster_revoked`·`request_declined`·`manager_appointed`·`manager_revoked`) |
 | `channel:kicked` | 대상 사용자의 소켓 | `{ channelId, reason, expiresAt\|null }` |
 | `channel:deleted` | 채널 룸 | `{ channelId }` |
 | `channels:stats` | lobby | `{ stats: [{ id, onlineCount, live, broadcaster?, startedAt?, hasAudio?, viewerCount? }] }` |

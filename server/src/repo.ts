@@ -460,6 +460,9 @@ export function resolvePendingFor(channelId: string, userId: string, status: 'gr
   for (const id of ids) resolveRequest(id, status, by);
   return ids;
 }
+export function adminIds(): string[] {
+  return (db.prepare('SELECT id FROM users WHERE is_admin = 1').all() as { id: string }[]).map((r) => r.id);
+}
 export function ownsAnyChannel(userId: string): boolean {
   return !!db.prepare(`SELECT 1 FROM channel_roles WHERE user_id = ? AND role = 'owner' LIMIT 1`).get(userId);
 }
