@@ -1052,7 +1052,9 @@ await test('방송 권한 부여·회수 (⋮ 메뉴): 부여 → 방송 가능 
   await O.page.getByRole('button', { name: '권한대상 관리 메뉴' }).first().click();
   assert((await O.page.getByRole('menuitem').allInnerTexts()).every((t) => !t.includes('방송 권한 회수')), '채널 개설자에게 회수 메뉴가 보임');
   await O.page.keyboard.press('Escape');
+  await O.page.getByRole('button', { name: '채널 관리' }).click(); // 방송 중에는 관리 창에서 확인
   assert(await O.page.getByRole('button', { name: '회수', exact: true }).first().isDisabled(), '개설자 화면의 회수 버튼이 활성화됨');
+  await O.page.keyboard.press('Escape');
   // 서버 관리자만 회수 (소켓)
   const AD = await apiLogin('회수관리자');
   await api(AD.cookie, 'POST', '/api/admin/claim', { code: ADMIN_CODE });

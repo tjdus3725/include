@@ -78,7 +78,7 @@ export function Stage({ stream, isSharing, starting, view, error, live, viewerCo
 
   return (
     <div>
-      <div ref={box} className="group relative aspect-video max-h-[62dvh] w-full overflow-hidden bg-black lg:max-h-none lg:rounded-xl" aria-label="방송 화면">
+      <div ref={box} className="group relative aspect-video max-h-[62dvh] w-full overflow-hidden bg-black lg:max-h-[calc(100dvh-17rem)] lg:rounded-xl" aria-label="방송 화면">
         <video ref={video} playsInline autoPlay muted={isSharing || muted} className={`h-full w-full bg-black object-contain ${showVideo ? '' : 'invisible'}`} />
 
         {isSharing && overlayOn && overlay && (

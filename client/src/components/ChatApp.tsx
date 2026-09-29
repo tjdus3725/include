@@ -75,6 +75,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
     setEntryFor(id);
   }, [enter]);
   /** 채널 퇴장: 서버에 퇴장을 알리고(useChat 정리 단계) 로비로 돌아간다 */
+  const [manageOpen, setManageOpen] = useState(false);
   const leave = useCallback(() => {
     setActiveId(null);
     setInfoOpen(false);
@@ -227,6 +228,15 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
       </div>
     </div>
   );
+  // 방송 화면 아래: 스크롤 없이 버튼만. 방송자는 방송 종료, 그 외에는 로비로 나가기 (관리 권한자는 채널 관리 창 버튼 추가)
+  const liveBar = (
+    <>
+      {bc.isSharingHere
+        ? <button className="btn-danger" onClick={() => void bc.stop()}><Icon name="stop" size={14} /> 방송 종료</button>
+        : <button className="btn-secondary" onClick={leave}><Icon name="logout" size={16} /> 로비로 나가기</button>}
+      {(canModerate || canBan) && <button className="btn-ghost" onClick={() => setManageOpen(true)}><Icon name="shield" size={16} /> 채널 관리</button>}
+    </>
+  );
   const chatEl = (
     <Chat
       state={state} pending={chat.pending} userId={user.id} conn={conn} messageMax={config.limits.messageMax}
@@ -302,7 +312,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
         <div className="flex min-w-0 flex-1 flex-col">
           {channelHeader}
           {shareAlert}
-          {live ? (<><div className="p-4 pb-3">{stage}</div><div className="flex min-h-0 flex-1 flex-col border-t border-ink-600">{panelEl('noParticipants')}</div></>) : chatEl}
+          {live ? (<><div className="p-4 pb-3">{stage}</div><div className="flex shrink-0 items-center justify-center gap-2 overflow-hidden border-t border-ink-600 p-4">{liveBar}</div></>) : chatEl}
         </div>
         <div className="flex w-[380px] shrink-0 flex-col xl:w-[420px]">
           {live ? <SplitColumn top={participantsEl} bottom={chatEl} /> : panelEl('full')}
@@ -379,6 +389,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
         </div>,
         pipWin.document.body,
       )}
+      {manageOpen && isDesktop && <Modal title="채널 관리" onClose={() => setManageOpen(false)}><div className="-m-5 flex max-h-[70dvh] flex-col">{panelEl('noParticipants')}</div></Modal>}
       {infoOpen && !isDesktop && <Modal title={channel?.name ?? '채널 정보'} onClose={() => setInfoOpen(false)}><div className="-m-5 flex max-h-[70dvh] flex-col">{panelEl('full')}</div></Modal>}
     </div>
   );
