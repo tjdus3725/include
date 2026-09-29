@@ -523,6 +523,16 @@ await test('UI 관리 기능: 공지 고정·메시지 삭제·강퇴·재입장
   return '공지 고정, 삭제 표시, 강퇴 → 재입장 차단 → 해제 → 재입장';
 });
 
+await test('서버 관리자 인증: 입장한 뒤 인증해도 즉시 관리·방송 권한 반영', async () => {
+  const U = await newUser('인증후보', { channel: 'demo' });
+  assert((await U.page.getByRole('button', { name: '방송 시작', exact: true }).count()) === 0, '인증 전에 방송 버튼이 보임');
+  await U.page.getByRole('button', { name: '내 프로필' }).click();
+  await U.page.getByRole('menuitem', { name: /서버 관리자 인증/ }).click();
+  await U.page.fill('input[type=password]', ADMIN_CODE);
+  await U.page.getByRole('button', { name: '인증', exact: true }).click();
+  await U.page.getByRole('button', { name: '방송 시작', exact: true }).waitFor({ timeout: 5000 });
+});
+
 await test('요청 빈도 제한(기본 설정): 로그인 연타 차단', async () => {
   const p2 = 3393;
   const dir = path.join(out, 'rl');

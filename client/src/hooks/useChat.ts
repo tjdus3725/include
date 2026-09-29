@@ -41,7 +41,7 @@ function merge(base: Message[], incoming: Message[]): Message[] {
   return [...map.values()].sort((a, b) => a.id - b.id);
 }
 
-export function useChat(channelId: string | null, conn: ConnState, messageMax: number) {
+export function useChat(channelId: string | null, conn: ConnState, messageMax: number, isAdmin = false) {
   const [state, setState] = useState<ChatState>(initial);
   const [pending, setPending] = useState<PendingMessage[]>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -92,7 +92,7 @@ export function useChat(channelId: string | null, conn: ConnState, messageMax: n
         setState((s) => ({ ...s, status: e.code === 'BANNED' ? 'kicked' : 'error', error: e.message }));
       });
     return () => { cancelled = true; };
-  }, [channelId, conn]);
+  }, [channelId, conn, isAdmin]); // isAdmin 이 바뀌면(서버 관리자 인증) 재입장해 권한 정보를 갱신
 
   // 실시간 이벤트
   useEffect(() => {

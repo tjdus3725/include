@@ -64,7 +64,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
     return () => window.removeEventListener('hashchange', on);
   }, []);
 
-  const chat = useChat(activeId, conn, config.limits.messageMax);
+  const chat = useChat(activeId, conn, config.limits.messageMax, user.isAdmin);
   const { state } = chat;
   const canModerate = !!state.me?.canModerate;
   const bc = useBroadcast({
