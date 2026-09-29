@@ -20,7 +20,7 @@
 | `GET /api/channels?q=` | ✔ | 검색어(이름·설명, 선택) | `{ channels: Channel[] }` (방송 중 채널이 먼저) |
 | `POST /api/channels` | ✔ | `{ name, description? }` | `201 { channel }` (생성자는 owner) |
 | `GET /api/channels/:id` | ✔ | - | `{ channel }` |
-| `DELETE /api/channels/:id` | ✔(소유자/서버 관리자) | - | `{ ok: true }` (기본 채널은 `400 DEFAULT_CHANNEL`) |
+| `DELETE /api/channels/:id` | ✔(소유자/서버 관리자) | - | `{ ok: true }` |
 | `GET /api/channels/:id/messages?before=<id>&limit=50` | ✔ | `before`: 이 ID 보다 오래된 메시지 | `{ messages: Message[](오래된→최신), hasMore }` |
 | `GET /inchat-ca.crt` | - | - | 로컬 CA **공개 인증서** 다운로드 (`npm run cert` 이후) |
 

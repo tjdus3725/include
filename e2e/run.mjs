@@ -68,6 +68,20 @@ for (let i = 0; i < 50; i++) {
   await sleep(200);
 }
 
+// 서비스는 기본 방을 만들지 않는다. 먼저 "방이 하나도 없는 상태"를 확인한 뒤, 테스트가 쓸 방 4개를 테스트 전용으로 준비한다.
+const emptyCheck = await (async () => {
+  const r = await fetch(`${HTTP}/api/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nickname: '빈서버확인' }) });
+  const cookie = r.headers.getSetCookie()[0].split(';')[0];
+  const list = await (await fetch(`${HTTP}/api/channels`, { headers: { cookie } })).json();
+  return list.channels.length;
+})();
+{
+  const db = new Database(dbPath);
+  const ins = db.prepare("INSERT INTO channels (id, name, name_key, description, is_default, sort_order, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)");
+  [['all', '전체 채팅'], ['free', '자유 대화'], ['study', '코딩 스터디'], ['demo', '프로젝트 발표']].forEach(([id, n], i) => ins.run(id, n, n.toLowerCase(), `${n} (테스트용)`, i + 1, Date.now()));
+  db.close();
+}
+
 // ---------- 헬퍼 ----------
 async function apiLogin(nick) {
   const r = await fetch(`${HTTP}/api/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nickname: nick }) });
@@ -150,6 +164,11 @@ console.log(`\nInChat e2e  (HTTP ${HTTP}${HTTPS_LAN ? `, HTTPS ${HTTPS_LAN}` : '
 // =====================================================================
 console.log('[1] 입장·채팅');
 let A, B, C;
+await test('기본 방이 없음: 새 서버에는 방이 하나도 없다', async () => {
+  assert(emptyCheck === 0, `새 서버에 방이 ${emptyCheck}개 있음 (기본 방이 생성되면 안 됨)`);
+  return '방 0개 (기본 방 자동 생성 없음)';
+});
+
 await test('첫 접속: 닉네임 서버 검증 및 입장, 로그인 화면', async () => {
   for (const nick of ['a', '<script>', 'a b c', '관리자', 'x'.repeat(13), '이모지😀']) {
     const r = await fetch(`${HTTP}/api/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nickname: nick }) });
@@ -425,8 +444,8 @@ await test('채널 생성/목록/검색 + 생성자 권한', async () => {
   const search = await api(otherCookie, 'GET', `/api/channels?q=${encodeURIComponent('e2e')}`);
   assert(search.body.channels.length === 1 && search.body.channels[0].id === chId, '검색 결과 이상');
   const names = (await api(otherCookie, 'GET', '/api/channels')).body.channels.map((c) => c.name);
-  for (const n of ['전체 채팅', '자유 대화', '코딩 스터디', '프로젝트 발표']) assert(names.includes(n), `기본 채널 누락: ${n}`);
-  return '기본 채널 4개 + 생성 채널, 검색 1건, 중복/불허 문자 거부';
+  for (const n of ['전체 채팅', '자유 대화', '코딩 스터디', '프로젝트 발표']) assert(names.includes(n), `테스트용 방 누락: ${n}`);
+  return '테스트용 방 4개 + 생성 채널, 검색 1건, 중복/불허 문자 거부';
 });
 
 await test('비관리자의 관리 기능 호출 차단 (소켓 11종 + REST 채널 삭제 + 닉네임 탈취)', async () => {

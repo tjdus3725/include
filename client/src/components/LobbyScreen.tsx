@@ -60,6 +60,9 @@ export function LobbyScreen({ user, channels, loading, onPick, onCreate }: {
             <h2 className="text-sm font-bold text-mist-300">방송하지 않는 방 · {others.length}</h2>
             <button className="btn-secondary !py-1.5 text-xs" onClick={onCreate}><Icon name="plus" size={14} /> 방 만들기</button>
           </div>
+          {!loading && channels.length === 0 && (
+            <div className="card p-6 text-center text-sm text-mist-400">아직 만들어진 방이 없어요.<br />"방 만들기"로 첫 방을 만들어 보세요. 만든 사람은 그 방의 관리자가 됩니다.</div>
+          )}
           <ul className="grid gap-2 sm:grid-cols-2">
             {others.map((c) => (
               <li key={c.id}>

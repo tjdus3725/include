@@ -132,13 +132,11 @@ const MIGRATIONS: { name: string; sql: string }[] = [
     CREATE INDEX idx_requests_channel ON broadcast_requests(channel_id, status);
     `,
   },
-];
-
-const DEFAULT_CHANNELS = [
-  { id: 'all', name: '전체 채팅', description: '모두가 함께 이야기하는 기본 공간입니다.', sort: 1 },
-  { id: 'free', name: '자유 대화', description: '주제 제한 없이 편하게 대화해요.', sort: 2 },
-  { id: 'study', name: '코딩 스터디', description: '질문하고 답하며 함께 성장하는 스터디 채널입니다.', sort: 3 },
-  { id: 'demo', name: '프로젝트 발표', description: '진행 중인 프로젝트를 화면 공유로 발표하고 피드백을 받아요.', sort: 4 },
+  {
+    name: '기본 방(전체 채팅·자유 대화·코딩 스터디·프로젝트 발표) 삭제',
+    // 기본 방을 더 이상 자동 생성하지 않는다. 이미 만들어진 기본 방은 메시지·공지·이용 제한·방송 권한 요청과 함께 삭제된다(ON DELETE CASCADE).
+    sql: `DELETE FROM channels WHERE is_default = 1;`,
+  },
 ];
 
 export function migrate(): { from: number; to: number } {
@@ -151,17 +149,5 @@ export function migrate(): { from: number; to: number } {
       db.pragma(`user_version = ${v + 1}`);
     })();
   }
-  seedDefaults();
   return { from, to: MIGRATIONS.length };
-}
-
-function seedDefaults() {
-  const ins = db.prepare(
-    `INSERT OR IGNORE INTO channels (id, name, name_key, description, is_default, sort_order, created_at)
-     VALUES (?, ?, ?, ?, 1, ?, ?)`,
-  );
-  const now = Date.now();
-  db.transaction(() => {
-    for (const c of DEFAULT_CHANNELS) ins.run(c.id, c.name, c.name.toLowerCase(), c.description, c.sort, now);
-  })();
 }

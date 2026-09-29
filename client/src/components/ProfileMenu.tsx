@@ -135,7 +135,7 @@ function AdminDialog({ config, onClose, onUser }: { config: AppConfig; onClose: 
         <p className="text-sm leading-relaxed text-mist-300">서버 관리자 기능이 꺼져 있습니다. 서버 컴퓨터의 <code className="rounded bg-ink-700 px-1">.env</code> 파일에 <code className="rounded bg-ink-700 px-1">ADMIN_CODE</code> 를 설정하고 서버를 다시 시작하세요. (<code className="rounded bg-ink-700 px-1">npm run setup</code> 이 무작위 코드를 만들어 줍니다)</p>
       ) : (
         <form onSubmit={submit} className="space-y-4">
-          <p className="text-sm leading-relaxed text-mist-300">서버 컴퓨터의 <code className="rounded bg-ink-700 px-1">.env</code> 에 있는 관리자 코드를 입력하면 기본 채널(전체 채팅, 프로젝트 발표 등)을 포함한 모든 채널을 관리하고 방송할 수 있습니다.</p>
+          <p className="text-sm leading-relaxed text-mist-300">서버 컴퓨터의 <code className="rounded bg-ink-700 px-1">.env</code> 에 있는 관리자 코드를 입력하면 모든 방(다른 사람이 만든 방 포함)을 관리하고 방송할 수 있습니다.</p>
           <input type="password" className="field" value={code} onChange={(e) => setCode(e.target.value)} placeholder="관리자 코드" autoComplete="off" aria-label="관리자 코드" />
           {error && <p role="alert" className="text-sm text-coral-400">{error}</p>}
           <div className="flex justify-end gap-2">

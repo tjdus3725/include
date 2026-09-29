@@ -120,7 +120,7 @@ export function createApp() {
     refreshUser(req.auth!.user.id);
     res.json({ user: userDTO(repo.getUser(req.auth!.user.id)!) });
   });
-  // 서버 관리자 인증: ADMIN_CODE 를 아는 사용자만 기본 채널 등 모든 채널을 관리할 수 있음
+  // 서버 관리자 인증: ADMIN_CODE 를 아는 사용자만 모든 채널을 관리할 수 있음
   api.post('/admin/claim', requireAuth, claimLimiter, (req, res) => {
     if (!config.adminCode) throw new AppError('ADMIN_DISABLED', '서버 관리자 기능이 비활성화되어 있습니다. (.env 의 ADMIN_CODE 를 설정하세요)', 403);
     const { code } = parse(schemas.claim, req.body);
