@@ -15,6 +15,11 @@ import { channelDTO, destroyChannelRuntime, disconnectSession, notifyChannelsCha
 
 const userDTO = (u: repo.UserRow) => ({ id: u.id, nickname: u.nickname, color: u.color, isAdmin: !!u.is_admin, createdAt: u.created_at });
 
+/** 기본 포트(http 80 / https 443)는 주소에서 생략해 사용자가 입력할 내용을 줄인다 */
+function portSuffix(scheme: string, port: number): string {
+  return (scheme === 'http' && port === 80) || (scheme === 'https' && port === 443) ? '' : `:${port}`;
+}
+
 function lanAddresses(): string[] {
   const out: string[] = [];
   for (const list of Object.values(os.networkInterfaces())) {
@@ -75,8 +80,8 @@ export function createApp() {
       colors: PROFILE_COLORS,
       adminEnabled: !!config.adminCode,
       iceServers: config.stunUrls.length ? [{ urls: config.stunUrls }] : [],
-      https: config.httpsEnabled ? { port: config.httpsPort, url: `https://${host}:${config.httpsPort}`, caUrl: '/inchat-ca.crt' } : null,
-      lanUrls: lanAddresses().map((ip) => `${req.protocol}://${ip}:${req.socket.localPort ?? config.port}`),
+      https: config.httpsEnabled ? { port: config.httpsPort, url: `https://${host}${portSuffix('https', config.httpsPort)}`, caUrl: '/inchat-ca.crt' } : null,
+      lanUrls: lanAddresses().map((ip) => `${req.protocol}://${ip}${portSuffix(req.protocol, req.socket.localPort ?? config.port)}`),
       maxViewers: config.maxViewers,
       onlineUsers: totalOnlineUsers(),
     });

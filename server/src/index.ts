@@ -57,7 +57,7 @@ let listening = 0;
 for (const s of servers) {
   s.server.on('error', (e: NodeJS.ErrnoException) => {
     if (e.code === 'EADDRINUSE') log.error(`포트 ${s.port} 가 이미 사용 중입니다. .env 의 ${s.scheme === 'https' ? 'HTTPS_PORT' : 'PORT'} 를 바꾸거나 다른 프로그램을 종료하세요.`);
-    else if (e.code === 'EACCES') log.error(`포트 ${s.port} 에 바인딩할 권한이 없습니다. 1024 이상의 포트를 사용하세요.`);
+    else if (e.code === 'EACCES') log.error(`포트 ${s.port} 에 바인딩할 권한이 없습니다. 1024 미만 포트(80/443)는 macOS/Linux 에서 관리자 권한(sudo)이 필요합니다. 관리자 권한으로 실행하거나 1024 이상의 포트를 사용하세요.`);
     else log.error('서버 시작 실패:', e.message);
     process.exit(1);
   });
@@ -66,8 +66,10 @@ for (const s of servers) {
     const ips = lanIps();
     log.info('InChat 서버가 시작되었습니다.');
     for (const sv of servers) {
-      log.info(`  ${sv.scheme.toUpperCase()}  이 컴퓨터:  ${sv.scheme}://localhost:${sv.port}`);
-      for (const ip of ips) log.info(`  ${sv.scheme.toUpperCase()}  같은 네트워크: ${sv.scheme}://${ip}:${sv.port}`);
+      // 기본 포트(80/443)는 주소에서 생략
+      const suffix = (sv.scheme === 'http' && sv.port === 80) || (sv.scheme === 'https' && sv.port === 443) ? '' : `:${sv.port}`;
+      log.info(`  ${sv.scheme.toUpperCase()}  이 컴퓨터:  ${sv.scheme}://localhost${suffix}`);
+      for (const ip of ips) log.info(`  ${sv.scheme.toUpperCase()}  같은 네트워크: ${sv.scheme}://${ip}${suffix}`);
     }
     if (!config.httpsEnabled) log.info('  ※ 다른 기기에서 화면 공유(방송)를 하려면 HTTPS 가 필요합니다. README 의 "HTTPS 설정"을 참고하세요.');
     if (config.host === '127.0.0.1' || config.host === 'localhost') log.warn('HOST 가 로컬 전용입니다. 다른 기기에서 접속하려면 HOST=0.0.0.0 으로 설정하세요.');

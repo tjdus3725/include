@@ -1,3 +1,4 @@
+import QRCode from 'qrcode';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../lib/toast';
@@ -153,22 +154,46 @@ function InviteDialog({ config, onClose }: { config: AppConfig; onClose: () => v
   const copy = async (t: string) => toast((await copyText(t)) ? '주소를 복사했습니다.' : '복사하지 못했습니다. 직접 선택해 복사해 주세요.', 'info');
   const urls = config.lanUrls;
   const httpsBase = config.https;
-  const httpsUrls = httpsBase ? urls.map((u) => u.replace(/^http:\/\/([^:]+):\d+/, `https://$1:${httpsBase.port}`)) : [];
+  // 기본 포트(https 443)면 포트 번호를 생략한 주소가 된다
+  const httpsUrls = httpsBase ? urls.map((u) => u.replace(/^http:\/\/([^:/]+)(?::\d+)?/, `https://$1${httpsBase.port === 443 ? '' : `:${httpsBase.port}`}`)) : [];
+  const all = [...httpsUrls, ...urls];
+  const [selected, setSelected] = useState(urls[0] ?? all[0] ?? '');
+  const [qr, setQr] = useState('');
+
+  // QR 코드는 브라우저에서 직접 생성한다 (외부 서비스로 주소를 보내지 않음)
+  useEffect(() => {
+    if (!selected) return;
+    let alive = true;
+    QRCode.toString(selected, { type: 'svg', margin: 1, width: 192, errorCorrectionLevel: 'M' })
+      .then((svg) => { if (alive) setQr(svg); })
+      .catch(() => { if (alive) setQr(''); });
+    return () => { alive = false; };
+  }, [selected]);
+
   return (
     <Modal title="접속 주소 · 화면 공유 안내" onClose={onClose} wide>
       <div className="space-y-5 text-sm">
         <section>
           <h3 className="mb-2 font-bold">같은 네트워크의 다른 기기에서 접속할 주소</h3>
-          <ul className="space-y-1.5">
-            {[...(httpsUrls.length ? httpsUrls : []), ...urls].map((u) => (
-              <li key={u} className="flex items-center gap-2 rounded-lg bg-ink-700 px-3 py-2">
-                <code className="min-w-0 flex-1 truncate">{u}</code>
-                {u.startsWith('https') && <span className="rounded bg-mint-400/15 px-1.5 text-[10px] font-bold text-mint-300">화면 공유 가능</span>}
-                <button className="btn-ghost !p-1.5" onClick={() => copy(u)} aria-label={`${u} 복사`}><Icon name="copy" size={15} /></button>
-              </li>
-            ))}
-            {urls.length === 0 && <li className="text-mist-400">내부 IP 를 찾지 못했습니다. Wi-Fi/LAN 연결을 확인하세요.</li>}
-          </ul>
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <ul className="min-w-0 flex-1 space-y-1.5">
+              {all.map((u) => (
+                <li key={u} className={`flex items-center gap-2 rounded-lg px-3 py-2 ${selected === u ? 'bg-ink-600 ring-1 ring-mint-400/50' : 'bg-ink-700'}`}>
+                  <button className="min-w-0 flex-1 truncate text-left" onClick={() => setSelected(u)} aria-pressed={selected === u} title="QR 코드로 보기"><code>{u}</code></button>
+                  {u.startsWith('https') && <span className="rounded bg-mint-400/15 px-1.5 text-[10px] font-bold text-mint-300">화면 공유 가능</span>}
+                  <button className="btn-ghost !p-1.5" onClick={() => copy(u)} aria-label={`${u} 복사`}><Icon name="copy" size={15} /></button>
+                </li>
+              ))}
+              {all.length === 0 && <li className="text-mist-400">내부 IP 를 찾지 못했습니다. Wi-Fi/LAN 연결을 확인하세요.</li>}
+            </ul>
+            {qr && (
+              <figure className="mx-auto shrink-0 text-center">
+                <div className="rounded-lg bg-white p-1.5" role="img" aria-label={`${selected} 접속 QR 코드`} dangerouslySetInnerHTML={{ __html: qr }} />
+                <figcaption className="mt-1.5 max-w-48 break-all text-xs text-mist-400">스마트폰 카메라로 스캔<br />{selected}</figcaption>
+              </figure>
+            )}
+          </div>
+          <p className="mt-2 text-xs text-mist-500">주소를 누르면 해당 주소의 QR 코드가 표시됩니다. 서버 PC 의 IP 가 바뀌면 주소도 바뀌므로 공유기에서 IP 를 고정해 두세요.</p>
         </section>
         <section className="rounded-lg border border-ink-600 p-3 leading-relaxed text-mist-300">
           <h3 className="mb-1 font-bold text-mist-100">화면 공유(방송) 안내</h3>
