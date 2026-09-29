@@ -9,6 +9,7 @@ import { api } from '../lib/api';
 import { socket } from '../lib/socket';
 import { useToast } from '../lib/toast';
 import type { AppConfig, Ban, Channel, ConnState, EntryMode, Message, User } from '../lib/types';
+import { useNotifications } from '../hooks/useNotifications';
 import { useRequests } from '../hooks/useRequests';
 import { ChannelList } from './ChannelList';
 import { ChannelPanel } from './ChannelPanel';
@@ -105,12 +106,14 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   const { state } = chat;
   const canModerate = !!state.me?.canModerate;
   const canBroadcast = !!state.me?.canBroadcast;
+  const canBan = !!state.me?.canBan;
   const bc = useBroadcast({
     channelId: activeId, joined: state.status === 'joined', epoch: state.epoch,
     live: state.broadcast, canBroadcast, iceServers: config.iceServers,
   });
   const canReview = user.isAdmin || channels.some((c) => c.ownerId === user.id);
   const reqs = useRequests(conn, canReview);
+  const notif = useNotifications(conn, canReview);
   // 방송 권한을 새로 받으면 본인에게만 알려준다 (다른 참여자에게는 공개되지 않는다)
   const prevCan = useRef<boolean | null>(null);
   useEffect(() => { prevCan.current = null; }, [activeId]);
@@ -174,6 +177,13 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
       setBansVersion((v) => v + 1);
     }, grant ? `${nickname}님에게 방송 권한을 부여했습니다.` : `${nickname}님의 방송 권한을 회수했습니다.`);
   };
+  const onSetManager = (userId: string, nickname: string, appoint: boolean) => {
+    if (!appoint && !window.confirm(`${nickname}님의 매니저 권한을 회수할까요?`)) return;
+    void guard(async () => {
+      await (appoint ? chat.actions.appointManager(userId) : chat.actions.revokeManager(userId));
+      setBansVersion((v) => v + 1);
+    }, appoint ? `${nickname}님을 매니저로 임명했습니다.` : `${nickname}님의 매니저 권한을 회수했습니다.`);
+  };
   const onDeleteChannel = async () => {
     if (!channel || !window.confirm(`"${channel.name}" 채널을 삭제할까요? 저장된 메시지도 모두 삭제되며 되돌릴 수 없습니다.`)) return;
     try {
@@ -188,7 +198,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   // ---- 조각 ----
   const panel = (
     <ChannelPanel
-      state={state} user={user} config={config} canModerate={canModerate} canBroadcast={canBroadcast}
+      state={state} user={user} config={config} canModerate={canModerate} canBan={canBan} canBroadcast={canBroadcast}
       isSharing={bc.isSharingHere} starting={bc.startingHere} sharingElsewhere={sharingElsewhere} shareBlocked={bc.shareBlocked}
       onStart={() => void bc.start()} onStop={() => void bc.stop()}
       onSetNotice={async (b) => { await chat.actions.setNotice(b); toast('공지를 등록했습니다.', 'success'); }}
@@ -196,6 +206,8 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
       onKick={(userId, nickname) => setKickTarget({ userId, nickname })}
       onListBans={async () => (await chat.actions.listBans()).bans}
       onSetBroadcaster={onSetBroadcaster}
+      onSetManager={onSetManager}
+      onListManagers={async () => (await chat.actions.listManagers()).managers}
       onListBroadcasters={async () => (await chat.actions.listBroadcasters()).broadcasters}
       onUnban={async (uid): Promise<Ban[]> => { const r = await chat.actions.unban(uid); toast('이용 제한을 해제했습니다.', 'success'); return r.bans; }}
       onDeleteChannel={() => void onDeleteChannel()} bansVersion={bansVersion}
@@ -205,9 +217,9 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   const chatEl = (
     <Chat
       state={state} pending={chat.pending} userId={user.id} conn={conn} messageMax={config.limits.messageMax}
-      loadingOlder={chat.loadingOlder} canModerate={canModerate}
+      loadingOlder={chat.loadingOlder} canModerate={canModerate} canBan={canBan}
       onSend={chat.send} onRetry={chat.retry} onDiscard={chat.discard} onLoadOlder={() => void chat.loadOlder()}
-      onDelete={onDelete} onKick={(userId, nickname) => setKickTarget({ userId, nickname })} onSetBroadcaster={onSetBroadcaster}
+      onDelete={onDelete} onKick={(userId, nickname) => setKickTarget({ userId, nickname })} onSetBroadcaster={onSetBroadcaster} onSetManager={onSetManager}
       onRequestBroadcast={canBroadcast ? undefined : (name) => setRequestAdmin(name)}
     />
   );
@@ -298,7 +310,15 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
   return (
     <div className="flex h-dvh flex-col">
       <Header user={user} config={config} conn={conn} query={query} onQuery={setQuery} onToggleMenu={() => setMenuOpen((o) => !o)} menuOpen={menuOpen} onUser={onUser} onLogout={onLogout}
-        bell={canReview ? <NotificationBell requests={reqs.requests} onGrant={reqs.grant} onDismiss={reqs.dismiss} /> : undefined} />
+        bell={
+          <NotificationBell
+            notifications={notif.items} unread={notif.unread} onMarkRead={notif.markRead} onClear={notif.clear}
+            onOpenChannel={(id) => select(id)}
+            showManage={canReview} requests={reqs.requests} holders={notif.holders}
+            onGrant={async (r) => { await reqs.grant(r); void notif.reloadHolders(); }} onDismiss={reqs.dismiss}
+            onRevokeHolder={notif.revoke} onOpenManage={() => void notif.reloadHolders()}
+          />
+        } />
       <ConnectionBanner conn={conn} />
       {sharingElsewhere && (
         <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-coral-500/40 bg-coral-500/10 px-4 py-2 text-sm">

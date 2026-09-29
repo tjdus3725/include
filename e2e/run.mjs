@@ -539,6 +539,75 @@ await test('개설자는 입장 방식 팝업 없이 본인 닉네임으로 바�
   assert(txt.includes('화면개설자') && !/익명\d{4}/.test(txt), '개설자가 익명으로 표시됨');
 });
 
+await test('권한 위계 전수 검증: 서버 관리자 > 채널 관리자 > 매니저 > 일반 (차단·매니저·방송 권한)', async () => {
+  const mk = async (n) => { const l = await apiLogin(n); return { ...l, sock: await rawSocket(l.cookie) }; };
+  const A = await mk('위계서버관리자'), O = await mk('위계개설자'), M = await mk('위계매니저'), M2 = await mk('위계매니저2'), U = await mk('위계일반'), U2 = await mk('위계일반2');
+  assert((await api(A.cookie, 'POST', '/api/admin/claim', { code: ADMIN_CODE })).status === 200, '서버 관리자 인증 실패');
+  const cid = (await api(O.cookie, 'POST', '/api/channels', { name: '위계 검증방' })).body.channel.id;
+  for (const x of [A, O, M, M2, U, U2]) await emit(x.sock, 'channel:join', { channelId: cid });
+  const code = (r) => (r.ok ? 'ok' : r.error.code);
+  const kick = (x, t, minutes = 10) => emit(x.sock, 'user:kick', { channelId: cid, userId: t.user.id, minutes });
+  assert(code(await emit(U.sock, 'manager:appoint', { channelId: cid, userId: M.user.id })) === 'FORBIDDEN', '일반 사용자가 매니저 임명');
+  assert((await emit(O.sock, 'manager:appoint', { channelId: cid, userId: M.user.id })).ok && (await emit(O.sock, 'manager:appoint', { channelId: cid, userId: M2.user.id })).ok, '개설자의 매니저 임명 실패');
+  assert(code(await emit(A.sock, 'manager:appoint', { channelId: cid, userId: O.user.id })) === 'INVALID_TARGET', '개설자를 매니저로 임명할 수 있음');
+  for (const [ev, d] of [['manager:appoint', { userId: U.user.id }], ['manager:revoke', { userId: M2.user.id }], ['broadcaster:grant', { userId: U.user.id }], ['broadcaster:list', {}], ['notice:set', { body: 'x' }], ['broadcast:start', { hasAudio: false }]]) {
+    assert(code(await emit(M.sock, ev, { channelId: cid, ...d })) === 'FORBIDDEN', `매니저가 ${ev} 실행 가능`);
+  }
+  assert((await emit(M.sock, 'ban:list', { channelId: cid })).ok, '매니저의 차단 목록 조회 실패');
+  for (const [name, t] of [['개설자', O], ['서버 관리자', A], ['다른 매니저', M2], ['자기 자신', M]]) assert(code(await kick(M, t)) === 'INVALID_TARGET', `매니저가 ${name} 를 차단할 수 있음`);
+  assert((await kick(M, U)).ok, '매니저가 일반 사용자를 차단하지 못함');
+  assert(code(await emit(U.sock, 'channel:join', { channelId: cid })) === 'BANNED', '차단된 사용자가 재입장');
+  assert((await emit(M.sock, 'user:unban', { channelId: cid, userId: U.user.id })).ok, '매니저의 차단 해제 실패');
+  assert(code(await emit(U2.sock, 'user:kick', { channelId: cid, userId: U.user.id })) === 'FORBIDDEN', '일반 사용자가 차단 실행');
+  assert(code(await kick(O, A)) === 'INVALID_TARGET', '개설자가 서버 관리자를 차단');
+  assert((await kick(O, M2)).ok, '개설자가 매니저를 차단하지 못함');
+  assert((await emit(O.sock, 'user:unban', { channelId: cid, userId: M2.user.id })).ok, '개설자의 차단 해제 실패');
+  assert((await kick(A, O)).ok, '서버 관리자가 개설자를 차단하지 못함');
+  assert(code(await emit(O.sock, 'channel:join', { channelId: cid })) === 'BANNED', '차단된 개설자가 재입장');
+  assert((await emit(A.sock, 'user:unban', { channelId: cid, userId: O.user.id })).ok, '서버 관리자의 차단 해제 실패');
+  assert(code(await kick(A, A)) === 'INVALID_TARGET', '서버 관리자 자기 차단');
+  assert((await emit(A.sock, 'broadcaster:grant', { channelId: cid, userId: U2.user.id })).ok, '서버 관리자가 남의 채널에서 방송 권한 부여 실패');
+  for (const x of [A, O, M, M2, U, U2]) x.sock.close();
+  return '매니저는 차단·해제만, 서버/채널 관리자·다른 매니저 차단 불가, 개설자↔서버 관리자 위계 확인';
+});
+
+await test('알림: 입장해 본 채널의 방송 시작(과거 방문자 포함)·요청 거절·권한 변경 알림, 저장·읽음', async () => {
+  const mk = async (n) => { const l = await apiLogin(n); return { ...l, sock: await rawSocket(l.cookie), notes: [] }; };
+  const O = await mk('알림개설자'), P = await mk('알림접속자'), V = await mk('알림과거방문'), N = await mk('알림무관');
+  for (const x of [O, P, V, N]) x.sock.on('notification:new', (d) => x.notes.push(d.notification));
+  const cid = (await api(O.cookie, 'POST', '/api/channels', { name: '통지 검증방' })).body.channel.id;
+  for (const x of [O, P, V]) await emit(x.sock, 'channel:join', { channelId: cid });
+  await emit(V.sock, 'channel:leave', { channelId: cid }); // 입장해 본 뒤 나감
+  assert((await emit(O.sock, 'broadcast:start', { channelId: cid, hasAudio: false })).ok, '방송 시작 실패');
+  await sleep(400);
+  const started = (x) => x.notes.filter((n) => n.kind === 'broadcast_started').length;
+  assert(started(P) === 1 && started(V) === 1, `방문 이력이 있는 사용자가 방송 알림을 못 받음 (접속자 ${started(P)}, 과거 방문자 ${started(V)})`);
+  assert(started(O) === 0 && started(N) === 0, '방송자 본인 또는 방문 이력 없는 사용자가 알림을 받음');
+  const list = await emit(V.sock, 'notification:list', {});
+  assert(list.notifications.some((n) => n.kind === 'broadcast_started' && n.data.channelName === '통지 검증방' && !n.read), '알림이 저장되지 않음');
+  await emit(V.sock, 'notification:read', {});
+  assert((await emit(V.sock, 'notification:list', {})).notifications.every((n) => n.read), '읽음 처리 실패');
+  await emit(V.sock, 'notification:clear', {});
+  assert((await emit(V.sock, 'notification:list', {})).notifications.length === 0, '알림 삭제 실패');
+  // 요청 → 거절 알림, 부여/회수 알림
+  await emit(P.sock, 'channel:join', { channelId: cid });
+  assert((await emit(P.sock, 'broadcast:request', { channelId: cid })).ok, '방송 요청 실패');
+  const req = (await emit(O.sock, 'request:list', {})).requests[0];
+  assert((await emit(O.sock, 'request:dismiss', { requestId: req.id })).ok, '요청 거절 실패');
+  assert((await emit(O.sock, 'broadcaster:grant', { channelId: cid, userId: P.user.id })).ok && (await emit(O.sock, 'broadcaster:revoke', { channelId: cid, userId: P.user.id })).ok, '부여/회수 실패');
+  await sleep(400);
+  const kinds = P.notes.map((n) => n.kind);
+  assert(kinds.includes('request_declined') && kinds.includes('broadcaster_granted') && kinds.includes('broadcaster_revoked'), `요청자 알림 누락: ${kinds}`);
+  // 차단된 사용자에게는 방송 시작 알림을 보내지 않는다
+  assert((await emit(O.sock, 'broadcast:stop', { channelId: cid })).ok, '방송 종료 실패');
+  await emit(O.sock, 'user:kick', { channelId: cid, userId: V.user.id, minutes: 10 });
+  const before = started(V);
+  await emit(O.sock, 'broadcast:start', { channelId: cid, hasAudio: false });
+  await sleep(300);
+  assert(started(V) === before, '차단된 사용자가 방송 시작 알림을 받음');
+  for (const x of [O, P, V, N]) x.sock.close();
+});
+
 await test('인증·Origin·입력 보안 (세션 없음/위조/외부 Origin/SQL 주입/로그 민감정보)', async () => {
   const tryConnect = (opts) => new Promise((res) => { const s = io(HTTP, { transports: ['websocket'], reconnection: false, ...opts }); s.once('connect', () => { s.close(); res('connected'); }); s.once('connect_error', (e) => res(e.message)); });
   assert((await tryConnect({})) === 'AUTH_REQUIRED', '세션 없이 소켓 연결됨');
@@ -667,7 +736,10 @@ await test('로비 → 입장 방식(익명) 선택 → 익명 별칭만 노출 
   const hist = await B.page.evaluate(async (id) => (await fetch(`/api/channels/${id}/messages?before=999999&limit=50`)).json(), A.page.url().match(/#\/c\/([\w-]+)/)[1]);
   assert(!JSON.stringify(hist).includes('로비구경꾼'), '이전 메시지 조회에 실제 닉네임이 노출됨');
   assert((await B.page.getByRole('navigation', { name: '채널 목록' }).getByText('현재 위치').count()) === 1, '현재 위치 표시가 없음');
-  assert((await B.page.getByRole('button', { name: /알림/ }).count()) === 0, '일반 사용자에게 알림 아이콘이 보임');
+  // 알림 아이콘은 모든 사용자에게 있고, 일반 사용자에게는 "방송 권한 관리" 탭이 없다
+  await B.page.getByRole('button', { name: /^알림 \d+건$/ }).click();
+  assert((await B.page.getByRole('dialog', { name: '알림' }).count()) === 1 && (await B.page.getByRole('tab', { name: /방송 권한 관리/ }).count()) === 0, '일반 사용자 알림창 구성이 이상함');
+  await B.page.keyboard.press('Escape');
   // 관리자 계정 표시를 눌러 방송 요청
   await B.page.getByRole('button', { name: /로비방장 관리자에게 방송 요청 보내기/ }).click();
   await B.page.getByRole('dialog', { name: '방송 요청 보내기' }).getByRole('button', { name: '전송', exact: true }).click();
@@ -678,7 +750,7 @@ await test('로비 → 입장 방식(익명) 선택 → 익명 별칭만 노출 
   await B.page.getByRole('button', { name: '취소' }).click();
   // 관리자 알림: 누가·언제·어느 채널
   await A.page.getByRole('button', { name: /알림 1건/ }).click();
-  const txt = await A.page.getByRole('dialog', { name: '방송 권한 요청 알림' }).innerText();
+  const txt = await A.page.getByRole('dialog', { name: '알림' }).innerText();
   assert(txt.includes(alias) && txt.includes('로비 검증방') && /오늘 \d{2}:\d{2}/.test(txt), `알림 내용 이상: ${txt.replace(/\s+/g, ' ')}`);
   await A.page.screenshot({ path: path.join(out, 'desktop-bell.png') });
   // 서버가 권한을 보장하는지: 요청만으로는 방송 불가, 승인 후에만 가능
@@ -687,7 +759,7 @@ await test('로비 → 입장 방식(익명) 선택 → 익명 별칭만 노출 
   await A.page.reload();
   await A.page.getByRole('button', { name: /알림 1건/ }).waitFor({ timeout: 6000 }); // 나중에 접속해도 남아 있음
   await A.page.getByRole('button', { name: /알림 1건/ }).click();
-  await A.page.getByRole('button', { name: '방송 권한 부여' }).click();
+  await A.page.getByRole('button', { name: '부여', exact: true }).click();
   await A.page.getByRole('button', { name: /알림 0건/ }).waitFor({ timeout: 6000 });
   await B.page.getByText('방송 권한이 부여되었습니다').first().waitFor({ timeout: 6000 });
   assert(cookieB, 'ok');

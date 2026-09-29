@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { emitAck, socket, SocketError } from '../lib/socket';
-import type { Ban, Broadcaster, Channel, ConnState, LiveInfo, Message, Notice, Participant, PendingMessage } from '../lib/types';
+import type { Ban, Broadcaster, Channel, Manager, ConnState, LiveInfo, Message, Notice, Participant, PendingMessage } from '../lib/types';
 import { uid } from '../lib/util';
 
 export type JoinStatus = 'idle' | 'joining' | 'joined' | 'error' | 'kicked' | 'gone';
@@ -9,7 +9,7 @@ export interface ChatState {
   status: JoinStatus;
   error: string | null;
   channel: Channel | null;
-  me: { role: 'owner' | 'admin' | 'broadcaster' | 'member'; canModerate: boolean; canBroadcast: boolean } | null;
+  me: { role: 'owner' | 'admin' | 'manager' | 'broadcaster' | 'member'; canModerate: boolean; canBroadcast: boolean; canBan: boolean } | null;
   messages: Message[];
   hasMore: boolean;
   notice: Notice | null;
@@ -112,8 +112,8 @@ export function useChat(channelId: string | null, conn: ConnState, messageMax: n
     const onStarted = (d: { channelId: string; broadcaster: string; broadcasterId?: string; startedAt: number; hasAudio: boolean }) =>
       mine(d) && setState((s) => ({ ...s, broadcast: { live: true, broadcaster: d.broadcaster, broadcasterId: d.broadcasterId, startedAt: d.startedAt, hasAudio: d.hasAudio } }));
     const onEnded = (d: { channelId: string }) => mine(d) && setState((s) => ({ ...s, broadcast: { live: false } }));
-    const onRole = (d: { channelId: string; role: 'owner' | 'admin' | 'broadcaster' | 'member'; canBroadcast: boolean }) =>
-      mine(d) && setState((s) => (s.me ? { ...s, me: { ...s.me, role: d.role, canBroadcast: d.canBroadcast } } : s));
+    const onRole = (d: { channelId: string; role: 'owner' | 'admin' | 'manager' | 'broadcaster' | 'member'; canBroadcast: boolean; canBan: boolean }) =>
+      mine(d) && setState((s) => (s.me ? { ...s, me: { ...s.me, role: d.role, canBroadcast: d.canBroadcast, canBan: d.canBan } } : s));
     const onKicked = (d: { channelId: string; reason: string; expiresAt: number | null }) => {
       if (!mine(d)) return;
       const until = d.expiresAt ? `${new Date(d.expiresAt).toLocaleString('ko-KR')}까지` : '기한 없이';
@@ -213,6 +213,9 @@ export function useChat(channelId: string | null, conn: ConnState, messageMax: n
     listBans: () => emitAck<{ bans: Ban[] }>('ban:list', { channelId }),
     grantBroadcaster: (userId: string) => emitAck<{ broadcasters: Broadcaster[] }>('broadcaster:grant', { channelId, userId }),
     revokeBroadcaster: (userId: string) => emitAck<{ broadcasters: Broadcaster[] }>('broadcaster:revoke', { channelId, userId }),
+    appointManager: (userId: string) => emitAck<{ managers: Manager[] }>('manager:appoint', { channelId, userId }),
+    revokeManager: (userId: string) => emitAck<{ managers: Manager[] }>('manager:revoke', { channelId, userId }),
+    listManagers: () => emitAck<{ managers: Manager[] }>('manager:list', { channelId }),
     listBroadcasters: () => emitAck<{ broadcasters: Broadcaster[] }>('broadcaster:list', { channelId }),
   };
 

@@ -25,7 +25,7 @@ export interface Message {
 }
 export interface PendingMessage { clientId: string; body: string; createdAt: number; status: 'sending' | 'failed'; error?: string }
 
-export interface Participant { id: string; nickname: string; color: string; role: 'owner' | 'admin' | 'broadcaster' | 'member'; broadcasting: boolean }
+export interface Participant { id: string; nickname: string; color: string; role: 'owner' | 'admin' | 'manager' | 'broadcaster' | 'member'; broadcasting: boolean }
 export interface Notice { body: string; updatedAt: number; authorNickname: string | null }
 export interface Broadcaster { userId: string; nickname: string }
 export interface Ban { userId: string; nickname: string; reason: string; createdAt: number; expiresAt: number | null }
@@ -38,3 +38,10 @@ export type ConnState = 'connecting' | 'connected' | 'reconnecting' | 'disconnec
 /** 방송 권한 요청 (일반 사용자 → 관리자) */
 export interface BroadcastRequest { id: number; channelId: string; channelName: string; userId: string; displayName: string; anonymous: boolean; createdAt: number }
 export type EntryMode = 'nick' | 'anon';
+
+/** 알림함 항목 (서버가 저장·전달) */
+export type NotificationKind = 'broadcast_started' | 'broadcaster_granted' | 'broadcaster_revoked' | 'request_declined' | 'manager_appointed' | 'manager_revoked';
+export interface AppNotification { id: number; kind: NotificationKind; channelId: string | null; data: { channelName?: string; broadcaster?: string }; createdAt: number; read: boolean }
+/** 내가 관리하는 채널의 방송 권한 보유자 */
+export interface ManagedBroadcaster { channelId: string; channelName: string; userId: string; displayName: string }
+export interface Manager { userId: string; nickname: string }

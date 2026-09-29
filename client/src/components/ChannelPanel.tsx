@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ChatState } from '../hooks/useChat';
-import type { Ban, Broadcaster, User } from '../lib/types';
+import { buildMemberMenu } from '../lib/memberMenu';
+import type { Ban, Broadcaster, Manager, User } from '../lib/types';
 import type { AppConfig } from '../lib/types';
 import { Icon } from './Icon';
 import { MoreMenu } from './MoreMenu';
@@ -11,6 +12,7 @@ interface Props {
   user: User;
   config: AppConfig;
   canModerate: boolean;
+  canBan: boolean;
   canBroadcast: boolean;
   isSharing: boolean;
   starting: boolean;
@@ -26,13 +28,15 @@ interface Props {
   onUnban: (userId: string) => Promise<Ban[]>;
   onSetBroadcaster: (userId: string, nickname: string, grant: boolean) => void;
   onListBroadcasters: () => Promise<Broadcaster[]>;
+  onSetManager: (userId: string, nickname: string, appoint: boolean) => void;
+  onListManagers: () => Promise<Manager[]>;
   onDeleteChannel: () => void;
   bansVersion: number;
   /** 일반 사용자가 관리자 계정을 눌렀을 때 (방송 요청 보내기) */
   onRequestBroadcast: (adminName: string) => void;
 }
 
-const roleBadge = { owner: '채널 관리자', admin: '서버 관리자', broadcaster: '방송 권한', member: '' } as const;
+const roleBadge = { owner: '채널 관리자', admin: '서버 관리자', manager: '매니저', broadcaster: '방송 권한', member: '' } as const;
 
 export function ChannelPanel(p: Props) {
   const { state } = p;
@@ -43,16 +47,18 @@ export function ChannelPanel(p: Props) {
   const [bans, setBans] = useState<Ban[]>([]);
   const [banErr, setBanErr] = useState<string | null>(null);
   const [casters, setCasters] = useState<Broadcaster[]>([]);
+  const [managers, setManagers] = useState<Manager[]>([]);
 
   useEffect(() => { setNoticeText(state.notice?.body ?? ''); }, [state.notice?.body, ch?.id]);
   useEffect(() => {
-    if (!p.canModerate || state.status !== 'joined') return;
+    if (!p.canBan || state.status !== 'joined') return;
     p.onListBans().then((b) => { setBans(b); setBanErr(null); }).catch((e: Error) => setBanErr(e.message));
-  }, [p.canModerate, ch?.id, state.status, p.bansVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [p.canBan, ch?.id, state.status, p.bansVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!p.canModerate || state.status !== 'joined') return;
     p.onListBroadcasters().then(setCasters).catch(() => {});
+    p.onListManagers().then(setManagers).catch(() => {});
   }, [p.canModerate, ch?.id, state.status, p.bansVersion, state.participants]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!ch) return <div className="p-4 text-sm text-mist-500">채널 정보를 불러오는 중…</div>;
@@ -134,19 +140,33 @@ export function ChannelPanel(p: Props) {
               )}
               {u.broadcasting && <span className="rounded bg-coral-500 px-1.5 py-px text-[10px] font-extrabold text-white">방송 중</span>}
               {roleBadge[u.role] && <span className="rounded bg-mint-400/15 px-1.5 py-px text-[10px] font-bold text-mint-300">{roleBadge[u.role]}</span>}
-              {p.canModerate && u.id !== p.user.id && (u.role === 'member' || u.role === 'broadcaster') && (
-                <MoreMenu label={`${u.nickname} 관리 메뉴`} items={[
-                  u.role === 'broadcaster'
-                    ? { label: '방송 권한 회수', icon: 'stop', onClick: () => p.onSetBroadcaster(u.id, u.nickname, false) }
-                    : { label: '방송 권한 부여', icon: 'radio', onClick: () => p.onSetBroadcaster(u.id, u.nickname, true) },
-                  { label: '강퇴', icon: 'ban', danger: true, onClick: () => p.onKick(u.id, u.nickname) },
-                ]} />
-              )}
+              {(p.canBan || p.canModerate) && u.id !== p.user.id && (() => {
+                const items = buildMemberMenu({
+                  actorRole: state.me?.role, canModerate: p.canModerate, canBan: p.canBan, targetRole: u.role,
+                  handlers: { setBroadcaster: (g) => p.onSetBroadcaster(u.id, u.nickname, g), setManager: (a) => p.onSetManager(u.id, u.nickname, a), kick: () => p.onKick(u.id, u.nickname) },
+                });
+                return items.length ? <MoreMenu label={`${u.nickname} 관리 메뉴`} items={items} /> : null;
+              })()}
             </li>
           ))}
           {state.participants.length === 0 && <li className="text-sm text-mist-500">접속 중인 사람이 없습니다.</li>}
         </ul>
       </div>
+
+      {p.canModerate && (
+        <div className={section}>
+          <h3 className={h}><Icon name="shield" size={14} /> 매니저 · {managers.length}</h3>
+          <ul className="space-y-1.5">
+            {managers.map((m) => (
+              <li key={m.userId} className="flex items-center gap-2 rounded-lg bg-ink-700 px-3 py-2 text-sm">
+                <span className="min-w-0 flex-1 truncate font-semibold">{m.nickname}</span>
+                <button className="btn-secondary !px-2.5 !py-1 text-xs" onClick={() => p.onSetManager(m.userId, m.nickname, false)}>회수</button>
+              </li>
+            ))}
+            {managers.length === 0 && <li className="text-sm text-mist-500">매니저가 없습니다. 참여자 옆 ⋮ 메뉴의 "매니저 임명"으로 지정하면 그 사용자가 이 채널에서 차단·차단 해제를 할 수 있어요.</li>}
+          </ul>
+        </div>
+      )}
 
       {p.canModerate && (
         <div className={section}>
@@ -163,7 +183,7 @@ export function ChannelPanel(p: Props) {
         </div>
       )}
 
-      {p.canModerate && (
+      {p.canBan && (
         <div className={section}>
           <h3 className={h}><Icon name="ban" size={14} /> 이용 제한 목록 · {bans.length}</h3>
           {banErr && <p role="alert" className="text-xs text-coral-400">{banErr}</p>}

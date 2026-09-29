@@ -36,7 +36,7 @@ Channel  { id, name, description, isDefault, ownerId|null, ownerNickname|null, c
            live, broadcaster?, startedAt?, hasAudio?, viewerCount? }
 Message  { id:number, channelId, kind:'user'|'system', userId|null, nickname|null, color|null,
            body, createdAt, deleted:boolean, clientId|null }   // deleted 이면 body 는 빈 문자열
-Participant { id, nickname, color, role:'owner'|'admin'|'broadcaster'|'member', broadcasting }
+Participant { id, nickname, color, role:'owner'|'admin'|'manager'|'broadcaster'|'member', broadcasting }
 Broadcaster { userId, nickname }
 BroadcastRequest { id, channelId, channelName, userId, displayName, anonymous, createdAt }
 Notice   { body, updatedAt, authorNickname|null }
@@ -63,14 +63,20 @@ Ban      { userId, nickname, reason, createdAt, expiresAt|null }
 | `message:delete` | `{ channelId, messageId }` | `{}` | 채널 관리자 |
 | `notice:set` | `{ channelId, body }` | `{ notice }` | 채널 관리자 |
 | `notice:clear` | `{ channelId }` | `{}` | 채널 관리자 |
-| `user:kick` | `{ channelId, userId, minutes?: number\|null, reason? }` (`minutes` 없음/null = 영구) | `{ bans }` | 채널 관리자 |
-| `user:unban` | `{ channelId, userId }` | `{ bans }` | 채널 관리자 |
-| `ban:list` | `{ channelId }` | `{ bans }` | 채널 관리자 |
+| `user:kick` | `{ channelId, userId, minutes?: number\|null, reason? }` (`minutes` 없음/null = 영구) | `{ bans }` | 서버 관리자·채널 관리자·매니저 (아래 "차단 위계") |
+| `user:unban` | `{ channelId, userId }` | `{ bans }` | 서버 관리자·채널 관리자·매니저 |
+| `ban:list` | `{ channelId }` | `{ bans }` | 서버 관리자·채널 관리자·매니저 |
 | `broadcast:start` | `{ channelId, hasAudio }` | `{}` | 채널 관리자 또는 **방송 권한 보유자** |
 | `broadcast:stop` | `{ channelId }` | `{}` | 방송 중인 본인 또는 채널 관리자 (방송자가 다른 채널에 있어도 가능) |
 | `broadcast:request` | `{ channelId }` | `{}` | 채널 참가자(방송 권한 없는 사용자). 관리자에게 방송 권한을 요청. 이미 대기 중이면 `ALREADY_REQUESTED`, 이미 권한이 있으면 `ALREADY_GRANTED` |
 | `request:list` | `{}` | `{ requests: BroadcastRequest[] }` | 서버 관리자는 전체, 채널 소유자는 자기 채널의 대기 중 요청 (그 외에는 빈 배열) |
 | `request:dismiss` | `{ requestId }` | `{}` | 해당 채널의 관리자 |
+| `manager:appoint` | `{ channelId, userId }` | `{ managers }` | 채널 관리자 (대상이 관리자면 `INVALID_TARGET`, 이미 매니저면 `ALREADY_MANAGER`) |
+| `manager:revoke` | `{ channelId, userId }` | `{ managers }` | 채널 관리자 |
+| `manager:list` | `{ channelId }` | `{ managers }` | 채널 관리자 |
+| `broadcaster:overview` | `{}` | `{ broadcasters: [{ channelId, channelName, userId, displayName }] }` | 내가 관리하는 채널의 방송 권한 보유자 (서버 관리자는 전체, 개설자는 자기 채널, 그 외 빈 배열) |
+| `notification:list` | `{}` | `{ notifications: [{ id, kind, channelId, data, createdAt, read }] }` | 본인 알림 최근 50개 |
+| `notification:read` / `notification:clear` | `{}` | `{}` | 본인 알림 읽음 처리 / 삭제 |
 | `broadcaster:grant` | `{ channelId, userId }` | `{ broadcasters }` | 채널 관리자 |
 | `broadcaster:revoke` | `{ channelId, userId }` | `{ broadcasters }` | 채널 관리자 (대상이 방송 중이면 방송도 종료) |
 | `broadcaster:list` | `{ channelId }` | `{ broadcasters }` | 채널 관리자 |
@@ -94,7 +100,8 @@ Ban      { userId, nickname, reason, createdAt, expiresAt|null }
 | `presence:update` | 채널 룸 | `{ channelId, participants: Participant[] }` |
 | `request:new` | 검토 권한이 있는 접속자(서버 관리자, 채널 소유자) | `{ request: BroadcastRequest }` |
 | `request:resolved` | 검토 권한이 있는 접속자 | `{ id }` (부여·무시·회수로 처리됨) |
-| `role:update` | 대상 사용자의 소켓(채널 룸) | `{ channelId, role, canBroadcast }` |
+| `role:update` | 대상 사용자의 소켓(채널 룸) | `{ channelId, role, canBroadcast, canBan }` |
+| `notification:new` | 대상 사용자의 모든 탭 | `{ notification }` (`kind`: `broadcast_started`·`broadcaster_granted`·`broadcaster_revoked`·`request_declined`·`manager_appointed`·`manager_revoked`) |
 | `channel:kicked` | 대상 사용자의 소켓 | `{ channelId, reason, expiresAt\|null }` |
 | `channel:deleted` | 채널 룸 | `{ channelId }` |
 | `channels:stats` | lobby | `{ stats: [{ id, onlineCount, live, broadcaster?, startedAt?, hasAudio?, viewerCount? }] }` |
@@ -122,3 +129,14 @@ Ban      { userId, nickname, reason, createdAt, expiresAt|null }
 `broadcast:stop`(방송 종료 버튼)으로 끝나는 것이 기본입니다. 그 외에 서버가 방송을 끝내는 경우는 다음뿐입니다:
 방송자 소켓 연결 끊김(탭 종료·네트워크 단절 — 화면 캡처도 함께 사라짐), 채널 관리자의 방송 권한 회수·강퇴·종료, 채널 삭제.
 한 소켓(탭)은 동시에 하나의 방송만 할 수 있습니다(`ALREADY_LIVE`).
+
+## 차단 위계
+
+| 실행자 | 차단할 수 있는 대상 |
+| --- | --- |
+| 서버 관리자 | 다른 서버 관리자를 제외한 모든 계정 (모든 채널) |
+| 채널 관리자(개설자) | 자기 채널의 매니저·일반 사용자 (서버 관리자 제외) |
+| 매니저 | 일반 사용자·방송 권한 보유자만 (서버 관리자, 채널 관리자, 다른 매니저, 자기 자신 불가) |
+
+거부되면 `INVALID_TARGET`(대상이 보호됨) 또는 `FORBIDDEN`(권한 없음). 이용 제한 검사는 서버 관리자에게만 면제됩니다.
+`role:'manager'` 는 모든 참여자에게 공개되지만 `broadcaster`(방송 권한 보유자)는 채널 관리자·서버 관리자에게만 내려갑니다.
