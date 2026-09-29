@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+@theme {
+  /* 딥 네이비 배경 + 민트/시안 포인트 */
+  --color-ink-950: #080e1b;
+  --color-ink-900: #0b1220;
+  --color-ink-800: #111a2e;
+  --color-ink-700: #17223a;
+  --color-ink-600: #1f2d4a;
+  --color-ink-500: #2b3c5e;
+  --color-mist-100: #f1f5fb;
+  --color-mist-200: #dbe3f0;
+  --color-mist-300: #b6c2d6;
+  --color-mist-400: #8b9ab3;
+  --color-mist-500: #64748f;
+  --color-mint-300: #7ee8d8;
+  --color-mint-400: #2dd4bf;
+  --color-mint-500: #14b8a6;
+  --color-cyan-400: #22d3ee;
+  --color-coral-400: #ff6b5e;
+  --color-coral-500: #f24e41;
+  --color-amber-400: #fbbf24;
+  --font-sans: "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--color-ink-900);
+  color: var(--color-mist-100);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+::selection { background: rgb(45 212 191 / 0.35); }
+
+/* 스크롤바 */
+* { scrollbar-width: thin; scrollbar-color: var(--color-ink-500) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--color-ink-500); border-radius: 8px; }
+
+/* 공통 버튼/입력 */
+@utility btn {
+  @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold
+    transition-colors duration-150 select-none
+    focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mint-400
+    disabled:cursor-not-allowed disabled:opacity-45;
+}
+@utility btn-primary { @apply btn bg-mint-400 text-ink-950 hover:bg-mint-300 active:bg-mint-500; }
+@utility btn-secondary { @apply btn bg-ink-600 text-mist-100 hover:bg-ink-500 active:bg-ink-700; }
+@utility btn-ghost { @apply btn bg-transparent text-mist-300 hover:bg-ink-700 hover:text-mist-100; }
+@utility btn-danger { @apply btn bg-coral-500 text-white hover:bg-coral-400 active:bg-coral-500; }
+@utility field {
+  @apply w-full rounded-lg border border-ink-500 bg-ink-800 px-3 py-2 text-sm text-mist-100
+    placeholder:text-mist-500 transition-colors
+    focus:border-mint-400 focus:outline-none focus:ring-2 focus:ring-mint-400/25
+    disabled:opacity-50;
+}
+@utility card { @apply rounded-xl border border-ink-600 bg-ink-800; }
+
+@keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.animate-fade-in { animation: fade-in 0.18s ease-out; }
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+.animate-pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in, .animate-pulse-dot { animation: none; }
+}

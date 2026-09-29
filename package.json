@@ -1,0 +1,31 @@
+{
+  "name": "inchat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "InChat - 같은 네트워크 안에서 연결되는 로컬 실시간 방송·채팅 서비스",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "concurrently -n server,client -c cyan,green \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w client && npm run build -w server",
+    "start": "npm run start -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
+    "db:migrate": "npm run db:migrate -w server",
+    "db:reset": "node scripts/db-reset.mjs",
+    "cert": "node scripts/gen-cert.mjs",
+    "ip": "node scripts/show-ip.mjs",
+    "e2e": "node e2e/run.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "node-forge": "^1.4.0",
+    "playwright-core": "^1.48.0"
+  }
+}

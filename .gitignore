@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+data/
+certs/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.log
+e2e/output/
+.DS_Store
