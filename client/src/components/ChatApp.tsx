@@ -220,7 +220,7 @@ export function ChatApp({ user, config, onUser, onLogout, onAuthLost }: {
       loadingOlder={chat.loadingOlder} canModerate={canModerate} canBan={canBan}
       onSend={chat.send} onRetry={chat.retry} onDiscard={chat.discard} onLoadOlder={() => void chat.loadOlder()}
       onDelete={onDelete} onKick={(userId, nickname) => setKickTarget({ userId, nickname })} onSetBroadcaster={onSetBroadcaster} onSetManager={onSetManager}
-      onRequestBroadcast={canBroadcast ? undefined : (name) => setRequestAdmin(name)}
+      onRequestBroadcast={(name) => setRequestAdmin(name)} canBroadcast={canBroadcast}
     />
   );
   const stage = live ? (

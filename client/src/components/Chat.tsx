@@ -3,7 +3,7 @@ import type { ChatState } from '../hooks/useChat';
 import type { ConnState, Message, Notice, PendingMessage } from '../lib/types';
 import { charCount, dayKey, fmtDate, fmtTime } from '../lib/util';
 import { Icon } from './Icon';
-import { buildMemberMenu, type Role } from '../lib/memberMenu';
+import { buildMemberMenu, canRequestFrom, type Role } from '../lib/memberMenu';
 import { MoreMenu } from './MoreMenu';
 import { Avatar } from './ProfileMenu';
 
@@ -24,8 +24,9 @@ interface Props {
   onKick: (userId: string, nickname: string) => void;
   onSetBroadcaster: (userId: string, nickname: string, grant: boolean) => void;
   onSetManager: (userId: string, nickname: string, appoint: boolean) => void;
-  /** 방송 권한이 없는 사용자에게만 전달: 관리자 닉네임을 누르면 방송 요청 팝업 */
+  /** 관리자 닉네임을 누르면 방송 요청 팝업 (누를 수 있는 대상은 canRequestFrom 규칙) */
   onRequestBroadcast?: (adminName: string) => void;
+  canBroadcast: boolean;
 }
 
 export function Chat(p: Props) {
@@ -102,7 +103,7 @@ export function Chat(p: Props) {
       lastDay = dk; lastUser = null;
     }
     const grouped = m.kind === 'user' && m.userId === lastUser && m.createdAt - lastAt < 5 * 60_000;
-    rows.push(<MessageRow key={m.id} m={m} mine={m.userId === p.userId} grouped={grouped} canModerate={p.canModerate} canBan={p.canBan} actorRole={state.me?.role} targetRole={state.participants.find((u) => u.id === m.userId)?.role} onRequestBroadcast={p.onRequestBroadcast} onDelete={p.onDelete} onKick={p.onKick} onSetBroadcaster={p.onSetBroadcaster} onSetManager={p.onSetManager} />);
+    rows.push(<MessageRow key={m.id} m={m} mine={m.userId === p.userId} grouped={grouped} canModerate={p.canModerate} canBan={p.canBan} actorRole={state.me?.role} targetRole={state.participants.find((u) => u.id === m.userId)?.role} onRequestBroadcast={p.onRequestBroadcast} canBroadcast={p.canBroadcast} onDelete={p.onDelete} onKick={p.onKick} onSetBroadcaster={p.onSetBroadcaster} onSetManager={p.onSetManager} />);
     lastUser = m.kind === 'user' ? m.userId : null;
     lastAt = m.createdAt;
   }
@@ -155,8 +156,8 @@ function NoticeBar({ notice }: { notice: Notice }) {
   );
 }
 
-function MessageRow({ m, mine, grouped, canModerate, canBan, actorRole, targetRole, onRequestBroadcast, onDelete, onKick, onSetBroadcaster, onSetManager }: {
-  m: Message; mine: boolean; grouped: boolean; canModerate: boolean; canBan: boolean; actorRole?: Role; targetRole?: Role; onRequestBroadcast?: (adminName: string) => void;
+function MessageRow({ m, mine, grouped, canModerate, canBan, canBroadcast, actorRole, targetRole, onRequestBroadcast, onDelete, onKick, onSetBroadcaster, onSetManager }: {
+  m: Message; mine: boolean; grouped: boolean; canModerate: boolean; canBan: boolean; canBroadcast: boolean; actorRole?: Role; targetRole?: Role; onRequestBroadcast?: (adminName: string) => void;
   onDelete: (m: Message) => void; onKick: (userId: string, nickname: string) => void;
   onSetBroadcaster: (userId: string, nickname: string, grant: boolean) => void;
   onSetManager: (userId: string, nickname: string, appoint: boolean) => void;
@@ -197,7 +198,7 @@ function MessageRow({ m, mine, grouped, canModerate, canBan, actorRole, targetRo
       <div className="min-w-0 max-w-[85%]">
         {!grouped && (
           <p className="mb-0.5 flex items-baseline gap-2">
-            {onRequestBroadcast && (targetRole === 'owner' || targetRole === 'admin') ? (
+            {onRequestBroadcast && canRequestFrom(actorRole, canBroadcast, targetRole) ? (
               <button className="truncate text-sm font-bold hover:underline" style={{ color: m.color ?? undefined }} onClick={() => onRequestBroadcast(m.nickname ?? '')} title="눌러서 방송 요청 보내기">{m.nickname}</button>
             ) : (
               <span className="truncate text-sm font-bold" style={{ color: m.color ?? undefined }}>{m.nickname ?? '알 수 없음'}</span>

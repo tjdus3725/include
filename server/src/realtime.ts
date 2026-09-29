@@ -72,10 +72,10 @@ const channelNameOf = (channelId: string) => repo.getChannel(channelId)?.name ??
 const isAnon = (channelId: string, userId: string) => !!identities.get(idKey(channelId, userId))?.anonymous;
 
 /** 방송 요청을 검토할 수 있는 접속자(그 채널의 개설자, 서버 관리자)에게만 이벤트를 보낸다 */
-function emitToReviewers(channelId: string, event: string, payload: unknown) {
+function emitToReviewers(channelId: string, event: string, payload: unknown, adminsOnly = false) {
   for (const s of io.sockets.sockets.values()) {
     const u = repo.getUser((s as S).data.userId);
-    if (u && repo.canModerate(u, channelId)) s.emit(event, payload);
+    if (u && (adminsOnly ? u.is_admin === 1 : repo.canModerate(u, channelId))) s.emit(event, payload);
   }
 }
 
@@ -466,7 +466,14 @@ export function initRealtime(server: Server) {
       requireModerator(user, d.channelId);
       const target = repo.getUser(d.userId);
       if (!target) throw new AppError('USER_NOT_FOUND', '대상 사용자를 찾을 수 없습니다.', 404);
-      if (repo.canModerate(target, d.channelId)) throw new AppError('INVALID_TARGET', '채널 관리자는 이미 방송할 수 있습니다.', 400);
+      if (repo.canModerate(target, d.channelId)) {
+        // 채널 개설자는 이미 방송할 수 있다. 개설자가 서버 관리자에게 보낸 요청이 있으면 승인 처리만 한다(역할은 추가하지 않음)
+        const pending = repo.isOwner(d.channelId, target.id) ? repo.getPendingRequest(d.channelId, target.id) : undefined;
+        if (!pending || user.is_admin !== 1) throw new AppError('INVALID_TARGET', '채널 관리자는 이미 방송할 수 있습니다.', 400);
+        for (const id of repo.resolvePendingFor(d.channelId, target.id, 'granted', user.id)) emitToReviewers(d.channelId, 'request:resolved', { id }, true);
+        pushNotification(target.id, 'broadcaster_granted', d.channelId, { channelName: channelNameOf(d.channelId) });
+        return { broadcasters: withNames(d.channelId, repo.listBroadcasters(d.channelId)) };
+      }
       if (repo.isBroadcaster(d.channelId, target.id)) throw new AppError('ALREADY_GRANTED', '이미 방송 권한이 있습니다.', 409);
       repo.grantBroadcaster(d.channelId, target.id);
       for (const id of repo.resolvePendingFor(d.channelId, target.id, 'granted', user.id)) emitToReviewers(d.channelId, 'request:resolved', { id });
@@ -488,20 +495,23 @@ export function initRealtime(server: Server) {
     // ---- 방송 권한 요청 (일반 사용자 → 채널 관리자/서버 관리자) ----
     handle(socket, 'broadcast:request', schemas.channelId, (d, user) => {
       requireJoined(socket, d.channelId);
-      if (repo.canBroadcast(user, d.channelId)) throw new AppError('ALREADY_GRANTED', '이미 이 채널에서 방송할 수 있습니다.', 409);
+      // 채널 개설자는 서버 관리자에게 요청을 남길 수 있다. 그 외에 이미 방송할 수 있는 사용자(방송 권한 보유자, 서버 관리자)는 불필요
+      if (repo.canBroadcast(user, d.channelId) && !repo.isOwner(d.channelId, user.id)) throw new AppError('ALREADY_GRANTED', '이미 이 채널에서 방송할 수 있습니다.', 409);
       if (repo.getPendingRequest(d.channelId, user.id)) {
         throw new AppError('ALREADY_REQUESTED', '이미 방송 요청을 보냈습니다. 관리자가 확인할 때까지 기다려 주세요.', 409);
       }
       const req = repo.createRequest(d.channelId, user.id, displayName(d.channelId, user), isAnon(d.channelId, user.id));
-      emitToReviewers(d.channelId, 'request:new', { request: req });
+      emitToReviewers(d.channelId, 'request:new', { request: req }, repo.isOwner(d.channelId, user.id)); // 개설자의 요청은 서버 관리자에게만
     });
     handle(socket, 'request:list', schemas.none, (_d, user) => ({ requests: repo.listRequestsFor(user) }));
     handle(socket, 'request:dismiss', schemas.dismiss, (d, user) => {
       const req = repo.getRequest(d.requestId);
       if (!req || req.status !== 'pending') throw new AppError('REQUEST_NOT_FOUND', '이미 처리되었거나 없는 요청입니다.', 404);
       requireModerator(user, req.channelId);
+      const fromOwner = repo.isOwner(req.channelId, req.userId);
+      if (fromOwner && user.is_admin !== 1) throw new AppError('FORBIDDEN', '채널 관리자의 방송 요청은 서버 관리자만 처리할 수 있습니다.', 403);
       repo.resolveRequest(req.id, 'dismissed', user.id);
-      emitToReviewers(req.channelId, 'request:resolved', { id: req.id });
+      emitToReviewers(req.channelId, 'request:resolved', { id: req.id }, fromOwner);
       pushNotification(req.userId, 'request_declined', req.channelId, { channelName: req.channelName });
     });
     // ---- 매니저 (차단/차단 해제만 가능한 채널별 역할, 임명은 채널 관리자·서버 관리자) ----

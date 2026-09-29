@@ -448,7 +448,7 @@ export function getRequest(id: number): (RequestDTO & { status: string }) | unde
 export function listRequestsFor(user: UserRow): RequestDTO[] {
   const rows = user.is_admin === 1
     ? (db.prepare(`${REQ_SELECT} WHERE r.status = 'pending' ORDER BY r.created_at DESC LIMIT 100`).all() as ReqRow[])
-    : (db.prepare(`${REQ_SELECT} WHERE r.status = 'pending' AND r.channel_id IN (SELECT channel_id FROM channel_roles WHERE user_id = ? AND role = 'owner') ORDER BY r.created_at DESC LIMIT 100`).all(user.id) as ReqRow[]);
+    : (db.prepare(`${REQ_SELECT} WHERE r.status = 'pending' AND r.user_id != ? AND r.channel_id IN (SELECT channel_id FROM channel_roles WHERE user_id = ? AND role = 'owner') ORDER BY r.created_at DESC LIMIT 100`).all(user.id, user.id) as ReqRow[]); // 개설자 본인의 요청은 제외
   return rows.map(reqDTO);
 }
 export function resolveRequest(id: number, status: 'granted' | 'dismissed', by: string): boolean {

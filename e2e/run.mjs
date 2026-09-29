@@ -571,6 +571,43 @@ await test('권한 위계 전수 검증: 서버 관리자 > 채널 관리자 > �
   return '매니저는 차단·해제만, 서버/채널 관리자·다른 매니저 차단 불가, 개설자↔서버 관리자 위계 확인';
 });
 
+await test('채널 관리자의 방송 요청: 서버 관리자에게만 전달·서버 관리자만 처리, 그 외 이미 방송 가능한 사용자는 요청 불가', async () => {
+  const mk = async (n) => { const l = await apiLogin(n); return { ...l, sock: await rawSocket(l.cookie), notes: [] }; };
+  const A = await mk('요청서버관리자'), O = await mk('요청개설자'), U = await mk('요청일반'), H = await mk('요청권한자');
+  await api(A.cookie, 'POST', '/api/admin/claim', { code: ADMIN_CODE });
+  for (const x of [A, O, U, H]) x.sock.on('notification:new', (d) => x.notes.push(d.notification));
+  const cid = (await api(O.cookie, 'POST', '/api/channels', { name: '요청 검증방' })).body.channel.id;
+  for (const x of [A, O, U, H]) await emit(x.sock, 'channel:join', { channelId: cid });
+  const code = (r) => (r.ok ? 'ok' : r.error.code);
+  assert((await emit(O.sock, 'broadcaster:grant', { channelId: cid, userId: H.user.id })).ok, '방송 권한 부여 실패');
+  assert(code(await emit(H.sock, 'broadcast:request', { channelId: cid })) === 'ALREADY_GRANTED', '방송 권한 보유자가 요청할 수 있음');
+  assert(code(await emit(A.sock, 'broadcast:request', { channelId: cid })) === 'ALREADY_GRANTED', '서버 관리자가 요청할 수 있음');
+  // 개설자 → 서버 관리자에게 요청
+  assert((await emit(O.sock, 'broadcast:request', { channelId: cid })).ok, '채널 관리자의 방송 요청 실패');
+  assert(code(await emit(O.sock, 'broadcast:request', { channelId: cid })) === 'ALREADY_REQUESTED', '중복 요청이 허용됨');
+  const adminReqs = (await emit(A.sock, 'request:list', {})).requests;
+  const mine = adminReqs.find((r) => r.userId === O.user.id);
+  assert(mine, '서버 관리자에게 개설자의 요청이 전달되지 않음');
+  assert(!(await emit(O.sock, 'request:list', {})).requests.some((r) => r.userId === O.user.id), '개설자 본인 알림함에 자기 요청이 보임');
+  assert(code(await emit(O.sock, 'request:dismiss', { requestId: mine.id })) === 'FORBIDDEN', '개설자가 자기 요청을 스스로 처리함');
+  assert(code(await emit(U.sock, 'request:dismiss', { requestId: mine.id })) === 'FORBIDDEN', '일반 사용자가 요청을 처리함');
+  assert((await emit(A.sock, 'broadcaster:grant', { channelId: cid, userId: O.user.id })).ok, '서버 관리자의 승인 실패');
+  await sleep(300);
+  assert(O.notes.some((n) => n.kind === 'broadcaster_granted'), '개설자에게 승인 알림이 없음');
+  assert(!(await emit(A.sock, 'request:list', {})).requests.some((r) => r.userId === O.user.id), '승인 후에도 요청이 남음');
+  assert(!(await emit(O.sock, 'broadcaster:list', { channelId: cid })).broadcasters.some((b) => b.userId === O.user.id), '개설자에게 방송 권한 역할 행이 만들어짐');
+  // 다시 요청 → 거절
+  assert((await emit(O.sock, 'broadcast:request', { channelId: cid })).ok, '재요청 실패');
+  const again = (await emit(A.sock, 'request:list', {})).requests.find((r) => r.userId === O.user.id);
+  assert((await emit(A.sock, 'request:dismiss', { requestId: again.id })).ok, '서버 관리자의 거절 실패');
+  await sleep(300);
+  assert(O.notes.some((n) => n.kind === 'request_declined'), '개설자에게 거절 알림이 없음');
+  // 개설자는 요청 여부와 상관없이 계속 방송할 수 있다
+  assert((await emit(O.sock, 'broadcast:start', { channelId: cid, hasAudio: false })).ok, '개설자가 방송하지 못함');
+  await emit(O.sock, 'broadcast:stop', { channelId: cid });
+  for (const x of [A, O, U, H]) x.sock.close();
+});
+
 await test('알림: 입장해 본 채널의 방송 시작(과거 방문자 포함)·요청 거절·권한 변경 알림, 저장·읽음', async () => {
   const mk = async (n) => { const l = await apiLogin(n); return { ...l, sock: await rawSocket(l.cookie), notes: [] }; };
   const O = await mk('알림개설자'), P = await mk('알림접속자'), V = await mk('알림과거방문'), N = await mk('알림무관');

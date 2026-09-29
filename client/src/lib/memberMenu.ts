@@ -36,3 +36,15 @@ export function buildMemberMenu(o: {
   if (kickable) items.push({ label: '차단(강퇴)', icon: 'ban' as IconName, danger: true, onClick: handlers.kick });
   return items;
 }
+
+/**
+ * 프로필(참여자 이름)을 눌러 방송 요청을 보낼 수 있는가
+ *  - 방송 권한이 없는 사용자(일반·매니저): 채널 관리자 또는 서버 관리자의 프로필
+ *  - 채널 관리자(개설자): 서버 관리자의 프로필 (요청은 서버 관리자에게만 전달된다)
+ *  - 서버 관리자·방송 권한 보유자: 요청할 필요 없음
+ */
+export function canRequestFrom(actorRole: Role | undefined, canBroadcast: boolean, targetRole: Role | undefined): boolean {
+  if (actorRole === 'owner') return targetRole === 'admin';
+  if (canBroadcast) return false;
+  return targetRole === 'owner' || targetRole === 'admin';
+}

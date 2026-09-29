@@ -68,7 +68,7 @@ Ban      { userId, nickname, reason, createdAt, expiresAt|null }
 | `ban:list` | `{ channelId }` | `{ bans }` | 서버 관리자·채널 관리자·매니저 |
 | `broadcast:start` | `{ channelId, hasAudio }` | `{}` | 채널 관리자 또는 **방송 권한 보유자** |
 | `broadcast:stop` | `{ channelId }` | `{}` | 방송 중인 본인 또는 채널 관리자 (방송자가 다른 채널에 있어도 가능) |
-| `broadcast:request` | `{ channelId }` | `{}` | 채널 참가자(방송 권한 없는 사용자). 관리자에게 방송 권한을 요청. 이미 대기 중이면 `ALREADY_REQUESTED`, 이미 권한이 있으면 `ALREADY_GRANTED` |
+| `broadcast:request` | `{ channelId }` | `{}` | 채널 참가자(방송 권한 없는 사용자, 또는 채널 개설자). 관리자에게 방송 권한을 요청. 개설자의 요청은 서버 관리자에게만 전달되어 서버 관리자만 처리(`broadcaster:grant`/`request:dismiss`). 이미 대기 중이면 `ALREADY_REQUESTED`, 이미 권한이 있으면 `ALREADY_GRANTED` |
 | `request:list` | `{}` | `{ requests: BroadcastRequest[] }` | 서버 관리자는 전체, 채널 소유자는 자기 채널의 대기 중 요청 (그 외에는 빈 배열) |
 | `request:dismiss` | `{ requestId }` | `{}` | 해당 채널의 관리자 |
 | `manager:appoint` | `{ channelId, userId }` | `{ managers }` | 채널 관리자 (대상이 관리자면 `INVALID_TARGET`, 이미 매니저면 `ALREADY_MANAGER`) |

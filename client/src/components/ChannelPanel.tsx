@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ChatState } from '../hooks/useChat';
-import { buildMemberMenu } from '../lib/memberMenu';
+import { buildMemberMenu, canRequestFrom } from '../lib/memberMenu';
 import type { Ban, Broadcaster, Manager, User } from '../lib/types';
 import type { AppConfig } from '../lib/types';
 import { Icon } from './Icon';
@@ -124,7 +124,7 @@ export function ChannelPanel(p: Props) {
         <ul className="space-y-1">
           {state.participants.map((u) => (
             <li key={u.id} className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-ink-700">
-              {!p.canBroadcast && (u.role === 'owner' || u.role === 'admin') && u.id !== p.user.id ? (
+              {canRequestFrom(state.me?.role, p.canBroadcast, u.role) && u.id !== p.user.id ? (
                 <button className="flex min-w-0 flex-1 items-center gap-2.5 rounded text-left hover:underline focus-visible:outline-2 focus-visible:outline-mint-400" onClick={() => p.onRequestBroadcast(u.nickname)} title="눌러서 방송 요청 보내기" aria-label={`${u.nickname} 관리자에게 방송 요청 보내기`}>
                   <Avatar nickname={u.nickname} color={u.color} size={28} />
                   <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: u.color }}>{u.nickname}</span>
